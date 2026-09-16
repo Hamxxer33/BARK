@@ -73,6 +73,16 @@
     .hide { display: none !important; }
     .warn { margin-top: 0.85rem; border-radius: 0.5rem; background: rgb(240 160 32 / 0.1); padding: 0.7rem 0.8rem; font-size: 0.8rem; line-height: 1.5; color: var(--moon); box-shadow: 0 0 0 1px rgb(240 160 32 / 0.25); }
     .msg a { color: inherit; }
+    .task { margin-top: 1.1rem; border-radius: 0.6rem; background: var(--surface-2); padding: 0.85rem; box-shadow: var(--shadow-border); }
+    .task-row { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.6rem; border-radius: 0.5rem; background: var(--surface); padding: 0.7rem 0.75rem; text-decoration: none; color: var(--fg); box-shadow: var(--shadow-border); }
+    .task-row:hover { box-shadow: 0 0 0 1px rgb(61 220 255 / 0.4); }
+    .task-row b { display: block; font-size: 0.88rem; font-weight: 600; }
+    .task-row span span { display: block; font-size: 0.74rem; color: var(--muted); }
+    .task-num { display: grid; place-items: center; flex: none; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: var(--primary); color: #041018; font-size: 0.78rem; font-weight: 700; }
+    .task-row.done .task-num { background: var(--success); }
+    .task-go { margin-left: auto; color: var(--muted); }
+    .task-done { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.7rem; font-size: 0.8rem; color: var(--fg); cursor: pointer; }
+    .task-done input { width: 1.05rem; height: 1.05rem; accent-color: var(--primary); cursor: pointer; }
   </style>
 </head>
 <body>
@@ -128,6 +138,23 @@
           <p class="kicker">Total allocation</p>
           <b id="alloc">—</b>
         </div>
+        <div class="task" id="task">
+          <p class="kicker">Before you claim</p>
+          <a class="task-row" id="taskFollow" href="https://x.com/Barkdotfun" target="_blank" rel="noreferrer">
+            <span class="task-num">1</span>
+            <span><b>Follow @Barkdotfun on X</b><span>and turn on notifications 🔔</span></span>
+            <span class="task-go" aria-hidden="true">↗</span>
+          </a>
+          <a class="task-row" id="taskPost" href="https://x.com/Barkdotfun/status/2100238594342551649" target="_blank" rel="noreferrer">
+            <span class="task-num">2</span>
+            <span><b>Like, repost &amp; comment</b><span>on the launch post</span></span>
+            <span class="task-go" aria-hidden="true">↗</span>
+          </a>
+          <label class="task-done" for="taskDone">
+            <input type="checkbox" id="taskDone" />
+            <span>Done — I followed and turned on notifications</span>
+          </label>
+        </div>
         <div class="row" style="margin-top:1rem">
           <button class="btn btn-primary" id="claim" type="button" disabled>Connect Wallet</button>
         </div>
@@ -143,6 +170,7 @@
         <a id="tokenLink" href="https://basescan.org/token/0xB200000000000000000000B8A0253f93DE48B78c" target="_blank" rel="noreferrer">Token</a>
         <a id="airdropLink" href="https://basescan.org/address/0x3cfec2dd7480004a6902cb66f1e15e8e919c8185" target="_blank" rel="noreferrer">Claim contract</a>
         <a href="https://app.uniswap.org/explore/tokens/base/0xB200000000000000000000B8A0253f93DE48B78c" target="_blank" rel="noreferrer">Uniswap</a>
+        <a id="xLink" href="https://x.com/Barkdotfun" target="_blank" rel="noreferrer">X</a>
       </p>
     </main>
   </div>
@@ -161,6 +189,8 @@
       chainId: 8453,
       symbol: "BARK",
       walletConnectProjectId: "",
+      x: "https://x.com/Barkdotfun",
+      xPost: "https://x.com/Barkdotfun/status/2100238594342551649",
     };
     // Empty values never win: a server missing AIRDROP_ADDRESS would otherwise blank out
     // the claim contract, and a transaction with no `to` is a contract deployment.
@@ -181,6 +211,9 @@
     const $ = (id) => document.getElementById(id);
 
     $("ca").textContent = cfg.token;
+    for (const [id, href] of [["xLink", cfg.x], ["taskFollow", cfg.x], ["taskPost", cfg.xPost]]) {
+      if (href) $(id).href = href;
+    }
     $("tokenLink").href = `https://basescan.org/token/${cfg.token}`;
     $("airdropLink").href = `https://basescan.org/address/${cfg.airdrop}`;
 
@@ -188,6 +221,20 @@
     const chain = createReader(rpc, cfg.airdrop);
     let preview = null;
     let account = null; // connected wallet state, kept in sync by wallet.subscribe
+
+    /* ------------------------------------------------------- the X task */
+
+    // Nothing here can be verified from the browser — following is not something a
+    // site can read. This is a prompt plus a self-declaration, kept in localStorage
+    // so it is not asked again on every visit.
+    const TASK_KEY = "bark.task.x";
+    const readTask = () => {
+      try { return localStorage.getItem(TASK_KEY) === "1"; } catch { return false; }
+    };
+    const writeTask = (value) => {
+      try { value ? localStorage.setItem(TASK_KEY, "1") : localStorage.removeItem(TASK_KEY); } catch {}
+    };
+    let taskDone = readTask();
 
     function fmt(n) {
       return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -262,6 +309,11 @@
       if (account.wrongChain) {
         button.textContent = "Switch to Base";
         button.disabled = false;
+        return;
+      }
+      if (!taskDone) {
+        button.textContent = "Follow on X to claim";
+        button.disabled = true;
         return;
       }
       button.textContent = "Claim BARK";
@@ -413,6 +465,18 @@
     };
     $("claim").onclick = () => claim().catch((e) => setMsg(e.shortMessage || e.message, "err"));
     $("watch").onclick = () => wallet.watchAsset({ address: cfg.token, symbol: cfg.symbol || "BARK", decimals: 18 });
+
+    $("taskDone").checked = taskDone;
+    $("taskDone").onchange = (e) => {
+      taskDone = e.target.checked;
+      writeTask(taskDone);
+      paintClaimButton();
+      if (taskDone) setMsg("");
+      else setMsg("Follow @Barkdotfun on X, then tick the box to claim.");
+    };
+    for (const id of ["taskFollow", "taskPost"]) {
+      $(id).addEventListener("click", () => $(id).classList.add("done"));
+    }
     $("wallet").addEventListener("keydown", (e) => {
       if (e.key === "Enter") lookup().catch((err) => setMsg(err.message, "err"));
     });
