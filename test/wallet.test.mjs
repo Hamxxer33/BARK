@@ -243,7 +243,8 @@ console.log(process.exitCode ? "\nFAILURES" : "\nall green");
 const qrStub = `export default function qrcode() {
   return { addData() {}, make() {}, getModuleCount() { return 3; }, isDark(r, c) { return (r + c) % 2 === 0; } };
 }`;
-const wcStub = `export const UniversalProvider = {
+const wcStub = `export let connectCalls = 0;
+export const UniversalProvider = {
   async init() {
     const handlers = {};
     return {
@@ -253,6 +254,8 @@ const wcStub = `export const UniversalProvider = {
       setDefaultChain() {},
       async disconnect() { this.session = null; },
       async connect() {
+        connectCalls += 1;
+        globalThis.__wcConnectCalls = connectCalls;
         (handlers["display_uri"] || []).forEach((f) => f("wc:abc123@2?relay-protocol=irn&symKey=deadbeef"));
         await new Promise((r) => setTimeout(r, 120));
         this.session = { namespaces: { eip155: {
@@ -324,6 +327,26 @@ check("walletconnect connector is remembered", () => {
 await wallet.disconnect();
 check("walletconnect disconnect clears state", () => {
   assert.equal(wallet.state.connected, false);
+});
+
+// Reopening the dialog must reuse the live proposal. Starting a second connect() on
+// the same provider is what made the relay answer "Failed to publish custom payload".
+const before = globalThis.__wcConnectCalls || 0;
+const reopen1 = wallet.connect();
+await new Promise((r) => setTimeout(r, 80));
+const callsAfterFirstOpen = (globalThis.__wcConnectCalls || 0) - before;
+document.querySelector(".bw-x")?.click();
+await reopen1.catch(() => {});
+
+const reopen2 = wallet.connect();
+await new Promise((r) => setTimeout(r, 80));
+const callsAfterSecondOpen = (globalThis.__wcConnectCalls || 0) - before;
+document.querySelector(".bw-x")?.click();
+await reopen2.catch(() => {});
+
+check("reopening the dialog reuses the pairing instead of starting another", () => {
+  assert.equal(callsAfterFirstOpen, 1, "first open should start exactly one pairing");
+  assert.equal(callsAfterSecondOpen, 1, `reopen started ${callsAfterSecondOpen} pairings total, expected to reuse the first`);
 });
 
 console.log(results.slice(-6).join("\n"));

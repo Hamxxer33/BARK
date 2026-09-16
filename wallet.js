@@ -274,6 +274,46 @@ function wrapWalletConnect(instance) {
   };
 }
 
+let pairing = null;
+
+/**
+ * One live pairing per page. The dialog can open, close and reopen freely: it
+ * subscribes to the same proposal rather than starting another, because two
+ * concurrent connect() calls on one provider make the relay fail the publish
+ * ("Failed to publish custom payload").
+ */
+function sharedPairing() {
+  if (pairing) return pairing;
+  const subscribers = new Set();
+  const entry = {
+    uri: "",
+    onUri(fn) {
+      subscribers.add(fn);
+      if (entry.uri) fn(entry.uri);
+      return () => subscribers.delete(fn);
+    },
+  };
+  entry.promise = connectWalletConnect((uri) => {
+    entry.uri = uri;
+    for (const fn of [...subscribers]) fn(uri);
+  }).finally(() => {
+    if (pairing === entry) pairing = null;
+  });
+  // A rejection is always handled by whichever dialog is open; this keeps a
+  // closed-dialog rejection from surfacing as an unhandled promise.
+  entry.promise.catch(() => {});
+  return (pairing = entry);
+}
+
+/** Friendlier text for the relay's internal wording. */
+function pairingErrorText(err) {
+  const raw = err?.message || "";
+  if (/Proposal expired/i.test(raw)) return "That request expired. Pick your wallet again.";
+  if (/publish|relay|socket|network/i.test(raw)) return "Lost the WalletConnect relay. Tap your wallet to try again.";
+  if (/rejected|User disapproved|cancel/i.test(raw)) return "The wallet rejected the connection.";
+  return raw || "WalletConnect failed";
+}
+
 async function connectWalletConnect(onUri) {
   const instance = await getWalletConnect();
 
@@ -512,6 +552,7 @@ function openModal() {
   function close(error) {
     if (settled) return;
     settled = true;
+    unsubscribe?.();
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     if (error) reject(error);
@@ -521,6 +562,7 @@ function openModal() {
   function finish(state) {
     if (settled) return;
     settled = true;
+    unsubscribe?.();
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     resolve(state);
@@ -540,38 +582,34 @@ function openModal() {
 
   /**
    * iOS Safari only follows a custom scheme while a real tap is still on the stack, and
-   * the pairing URI takes a CDN load plus a relay handshake to arrive. So start pairing
-   * the moment the dialog opens: by the time someone picks a wallet the link is ready
-   * and the tap handler can navigate synchronously.
+   * the pairing URI takes a CDN load plus a relay handshake to arrive. So subscribe to
+   * the shared pairing as soon as the dialog opens: by the time someone picks a wallet
+   * the link is ready and the tap handler can navigate synchronously.
    */
   let pairingUri = "";
-  let pairingStarted = false;
   let waitingFor = null; // wallet picked before the URI landed
+  let unsubscribe = null;
 
   function beginPairing() {
-    if (pairingStarted || !config.projectId) return;
-    pairingStarted = true;
-    connectWalletConnect((uri) => {
+    if (unsubscribe || !config.projectId) return;
+    const entry = sharedPairing();
+    unsubscribe = entry.onUri((uri) => {
       pairingUri = uri;
       if (waitingFor === null) return;
-      const entry = waitingFor;
+      const picked = waitingFor;
       waitingFor = null;
-      if (entry === "qr") renderQr(uri);
-      else handOff(entry, uri);
-    })
-      .then(finish)
-      .catch((err) => {
-        if (settled) return;
-        pairingStarted = false;
-        pairingUri = "";
-        waitingFor = null;
-        renderPicker();
-        showError(
-          /Proposal expired/i.test(err?.message || "")
-            ? "That request expired. Pick your wallet again."
-            : err?.message || "WalletConnect failed",
-        );
-      });
+      if (picked === "qr") renderQr(uri);
+      else handOff(picked, uri);
+    });
+    entry.promise.then(finish).catch((err) => {
+      if (settled) return;
+      unsubscribe?.();
+      unsubscribe = null;
+      pairingUri = "";
+      waitingFor = null;
+      renderPicker();
+      showError(pairingErrorText(err));
+    });
   }
 
   function renderPicker() {
@@ -636,7 +674,14 @@ function openModal() {
     let all = [];
     const paint = () => {
       const needle = query.trim().toLowerCase();
-      const rows = needle ? all.filter((row) => row.name.toLowerCase().includes(needle)) : all;
+      const rows = needle
+        ? all
+            .filter((row) => row.name.toLowerCase().includes(needle))
+            .sort((a, b) => {
+              const rank = (n) => (n.toLowerCase().startsWith(needle) ? 0 : 1);
+              return rank(a.name) - rank(b.name);
+            })
+        : all;
       tiles.replaceChildren();
       if (!rows.length) {
         tiles.appendChild(el("p", { class: "bw-empty", style: "grid-column:1/-1", text: needle ? `No wallet matches "${query}"` : "No wallets available" }));
