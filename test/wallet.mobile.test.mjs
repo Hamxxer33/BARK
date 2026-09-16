@@ -108,12 +108,19 @@ search.value = "";
 search.dispatchEvent(new dom.window.Event("input"));
 console.log("  ok  search filters the grid and reports an empty result");
 
-// tapping a wallet pairs, then hands off with the encoded uri
+// Tapping a wallet must navigate *inside the tap*: iOS drops a custom-scheme
+// navigation that happens a tick later, which is why the link is pre-generated.
 [...document.querySelectorAll(".bw-tile")].find((t) => t.textContent.includes("MetaMask")).click();
-await new Promise((r) => setTimeout(r, 40));
-assert.equal(navigatedTo, "metamask://wc?uri=wc%3Aa1%402%3Frelay-protocol%3Dirn%26symKey%3Dbeef");
+assert.equal(
+  navigatedTo,
+  "metamask://wc?uri=wc%3Aa1%402%3Frelay-protocol%3Dirn%26symKey%3Dbeef",
+  "deep link must fire synchronously in the click handler, not after an await",
+);
+console.log("  ok  tapping a wallet opens it synchronously, inside the user gesture");
+await new Promise((r) => setTimeout(r, 20));
 assert.match(document.body.textContent, /Continue in MetaMask/);
-console.log("  ok  tapping a wallet opens it with the encoded pairing uri");
+assert.match(document.body.textContent, /Show QR code instead/);
+console.log("  ok  hand-off screen offers a retry and a QR fallback");
 
 const state = await pending;
 assert.equal(state.address, "0x4444444444444444444444444444444444444444");

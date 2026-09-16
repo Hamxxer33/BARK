@@ -537,7 +537,42 @@ function openModal() {
   /* --- screen 1: installed wallets + the searchable directory --- */
 
   let query = "";
-  let showQr = false;
+
+  /**
+   * iOS Safari only follows a custom scheme while a real tap is still on the stack, and
+   * the pairing URI takes a CDN load plus a relay handshake to arrive. So start pairing
+   * the moment the dialog opens: by the time someone picks a wallet the link is ready
+   * and the tap handler can navigate synchronously.
+   */
+  let pairingUri = "";
+  let pairingStarted = false;
+  let waitingFor = null; // wallet picked before the URI landed
+
+  function beginPairing() {
+    if (pairingStarted || !config.projectId) return;
+    pairingStarted = true;
+    connectWalletConnect((uri) => {
+      pairingUri = uri;
+      if (waitingFor === null) return;
+      const entry = waitingFor;
+      waitingFor = null;
+      if (entry === "qr") renderQr(uri);
+      else handOff(entry, uri);
+    })
+      .then(finish)
+      .catch((err) => {
+        if (settled) return;
+        pairingStarted = false;
+        pairingUri = "";
+        waitingFor = null;
+        renderPicker();
+        showError(
+          /Proposal expired/i.test(err?.message || "")
+            ? "That request expired. Pick your wallet again."
+            : err?.message || "WalletConnect failed",
+        );
+      });
+  }
 
   function renderPicker() {
     body.replaceChildren();
@@ -582,11 +617,13 @@ function openModal() {
       class: "bw-qrbtn",
       type: "button",
       "aria-label": "Show QR code",
-      "aria-pressed": String(showQr),
       html: '<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M3 3h5v5H3V3zm1.5 1.5v2h2v-2h-2zM12 3h5v5h-5V3zm1.5 1.5v2h2v-2h-2zM3 12h5v5H3v-5zm1.5 1.5v2h2v-2h-2zM12 12h2v2h-2v-2zm3 0h2v2h-2v-2zm-3 3h2v2h-2v-2zm3 0h2v2h-2v-2z"/></svg>',
       onclick: () => {
-        showQr = true;
-        startPairing(null);
+        if (pairingUri) renderQr(pairingUri);
+        else {
+          waitingFor = "qr";
+          renderWaiting(null);
+        }
       },
     });
     body.appendChild(el("div", { class: "bw-tools" }, [search, qrButton]));
@@ -610,7 +647,7 @@ function openModal() {
           ? el("span", { class: "bw-logo bw-badge" }, [el("img", { src: row.image, alt: "", loading: "lazy" })])
           : el("span", { class: "bw-logo bw-badge", text: row.name.slice(0, 1).toUpperCase() });
         tiles.appendChild(
-          el("button", { class: "bw-tile", type: "button", title: row.name, onclick: () => startPairing(row) }, [
+          el("button", { class: "bw-tile", type: "button", title: row.name, onclick: () => choose(row) }, [
             logo,
             el("span", { text: row.name }),
           ]),
@@ -623,7 +660,12 @@ function openModal() {
       paint();
     });
 
-    tiles.appendChild(el("p", { class: "bw-empty", style: "grid-column:1/-1", text: "Loading wallets…" }));
+    // Show the shortlist at once so nobody waits on a spinner, then swap in the
+    // full directory when it answers.
+    all = FALLBACK_WALLETS;
+    paint();
+    beginPairing();
+
     fetchWallets()
       .then((rows) => {
         all = rows;
@@ -697,47 +739,52 @@ function openModal() {
     body.appendChild(el("div", { class: "bw-uri" }, [copy]));
   }
 
-  /** entry === null means "just show me the QR". */
-  async function startPairing(entry) {
-    renderWaiting(entry);
-    let handedOff = false;
-
-    const onUri = async (uri) => {
-      // Those deep links are phone schemes — on a desktop the QR is the way across.
-      if (!entry || !isMobile()) return renderQr(uri);
-      const link = walletDeepLink(entry, uri);
-      if (!link) return renderQr(uri);
-
-      // Safari only honours the hand-off while it still counts as user-initiated.
-      window.location.href = link;
-      handedOff = true;
-
-      body.replaceChildren(
-        el("div", { style: "display:grid;place-items:center;gap:0.75rem;padding:1rem 0" }, [
-          entry.image ? el("span", { class: "bw-logo" }, [el("img", { src: entry.image, alt: "" })]) : null,
-          el("p", { class: "bw-hint", style: "margin:0;text-align:center", text: `Continue in ${entry.name}, then come back to this tab.` }),
-        ]),
-      );
-      const retry = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
-        el("span", { text: `Open ${entry.name} again` }),
-      ]);
-      retry.addEventListener("click", () => { window.location.href = link; });
-      body.appendChild(el("div", { class: "bw-uri" }, [retry]));
-    };
-
-    try {
-      const state = await connectWalletConnect(onUri);
-      finish(state);
-    } catch (err) {
-      showQr = false;
-      renderPicker();
-      const message = /Proposal expired/i.test(err?.message || "")
-        ? "That request expired. Pick your wallet again."
-        : handedOff && /rejected|cancel/i.test(err?.message || "")
-          ? `${entry?.name || "The wallet"} rejected the connection.`
-          : err?.message || "WalletConnect failed";
-      showError(message);
+  /**
+   * Runs inside the tap. If the pairing link is already here we navigate right away,
+   * which is the only way iOS opens the wallet app; otherwise we wait for it.
+   */
+  function choose(entry) {
+    if (!isMobile()) {
+      // Those schemes are phone-only; a desktop needs the code on screen.
+      if (pairingUri) renderQr(pairingUri);
+      else {
+        waitingFor = "qr";
+        renderWaiting(null);
+      }
+      return;
     }
+    if (pairingUri) return handOff(entry, pairingUri);
+    waitingFor = entry;
+    renderWaiting(entry);
+  }
+
+  function handOff(entry, uri) {
+    const link = walletDeepLink(entry, uri);
+    if (!link) return renderQr(uri);
+
+    window.location.href = link;
+
+    body.replaceChildren(
+      el("div", { style: "display:grid;place-items:center;gap:0.75rem;padding:1rem 0" }, [
+        entry.image ? el("span", { class: "bw-logo" }, [el("img", { src: entry.image, alt: "" })]) : null,
+        el("p", {
+          class: "bw-hint",
+          style: "margin:0;text-align:center",
+          text: `Continue in ${entry.name}, then come back to this tab.`,
+        }),
+      ]),
+    );
+    const retry = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
+      el("span", { text: `Open ${entry.name} again` }),
+    ]);
+    retry.addEventListener("click", () => {
+      window.location.href = link;
+    });
+    const useQr = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
+      el("span", { text: "Show QR code instead" }),
+    ]);
+    useQr.addEventListener("click", () => renderQr(uri));
+    body.appendChild(el("div", { class: "bw-list", style: "margin-top:0.75rem" }, [retry, useQr]));
   }
 
   renderPicker();
