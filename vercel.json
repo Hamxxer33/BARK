@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/config", "destination": "/api/config" },
     { "source": "/api/preview", "destination": "/api/preview" },
     { "source": "/api/sign", "destination": "/api/sign" }
   ]

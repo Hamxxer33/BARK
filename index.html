@@ -64,11 +64,33 @@
     .fine { text-align: center; font-size: 0.75rem; line-height: 1.5; color: var(--muted); }
     .fine a { color: var(--primary); text-decoration: none; }
     .links { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; justify-content: flex-end; padding: 0.9rem 1rem; }
+    .btn-sm { width: auto; padding: 0.6rem 0.9rem; font-family: var(--font-sans); font-size: 0.85rem; font-weight: 500; letter-spacing: 0; }
+    .pill { display: flex; align-items: center; gap: 0.5rem; border-radius: 0.6rem; background: var(--surface); padding: 0.4rem 0.45rem 0.4rem 0.6rem; box-shadow: var(--shadow-border); }
+    .pill code { font-family: var(--font-mono); font-size: 0.8rem; }
+    .pill .who { font-size: 0.65rem; color: var(--muted); display: block; line-height: 1.3; }
+    .avatar { flex: none; width: 1.4rem; height: 1.4rem; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--moon)); }
+    .hide { display: none !important; }
+    .warn { margin-top: 0.85rem; border-radius: 0.5rem; background: rgb(240 160 32 / 0.1); padding: 0.7rem 0.8rem; font-size: 0.8rem; line-height: 1.5; color: var(--moon); box-shadow: 0 0 0 1px rgb(240 160 32 / 0.25); }
+    .msg a { color: inherit; }
   </style>
 </head>
 <body>
   <div class="page">
     <div class="bg"><div class="bg-glow-a"></div><div class="bg-glow-b"></div></div>
+
+    <header class="topbar">
+      <button class="btn btn-outline btn-sm" id="connect" type="button">Connect Wallet</button>
+      <div class="pill hide" id="pill">
+        <span class="avatar" id="avatar" aria-hidden="true"></span>
+        <span>
+          <span class="who" id="walletName"></span>
+          <code id="pillAddress"></code>
+        </span>
+        <button class="btn btn-outline btn-sm" id="disconnect" type="button" title="Disconnect">Disconnect</button>
+      </div>
+    </header>
+
     <main class="wrap">
       <div class="mark" aria-hidden="true">
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
@@ -96,7 +118,7 @@
         <input id="wallet" placeholder="0x…" spellcheck="false" autocomplete="off" />
         <div class="row">
           <button class="btn btn-outline" id="lookup" type="button">Check Allocation</button>
-          <button class="btn btn-outline" id="connect" type="button">Use my wallet</button>
+          <button class="btn btn-outline" id="useWallet" type="button">Use my wallet</button>
         </div>
         <div class="stats">
           <div class="stat"><p>Base transactions</p><b id="txs">—</b></div>
@@ -107,9 +129,13 @@
           <b id="alloc">—</b>
         </div>
         <div class="row" style="margin-top:1rem">
-          <button class="btn btn-primary" id="claim" type="button" disabled>Claim BARK</button>
+          <button class="btn btn-primary" id="claim" type="button" disabled>Connect Wallet</button>
         </div>
+        <p class="warn hide" id="warn"></p>
         <p class="msg" id="msg"></p>
+        <div class="row hide" id="watchRow">
+          <button class="btn btn-outline" id="watch" type="button">Add BARK to my wallet</button>
+        </div>
       </section>
 
       <p class="fine">Base only · 15B BARK airdrop · LP locked forever</p>
@@ -124,6 +150,7 @@
   <script type="module">
     import { createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, isAddress, getAddress } from "https://esm.sh/viem@2.28.0";
     import { base } from "https://esm.sh/viem@2.28.0/chains";
+    import { wallet, shortAddress } from "./wallet.js";
 
     const FALLBACK = {
       token: "0xB200000000000000000000B8A0253f93DE48B78c",
@@ -131,8 +158,24 @@
       rpc: "https://mainnet.base.org",
       chainId: 8453,
       symbol: "BARK",
+      walletConnectProjectId: "",
     };
-    const cfg = Object.assign({}, FALLBACK, window.B20 || {});
+    // Empty values never win: a server missing AIRDROP_ADDRESS would otherwise blank out
+    // the claim contract, and a transaction with no `to` is a contract deployment.
+    const cfg = { ...FALLBACK };
+    const merge = (source) => {
+      for (const [key, value] of Object.entries(source || {})) if (value) cfg[key] = value;
+    };
+    merge(window.B20);
+
+    // On Vercel the page is served as a static file, so the server never gets to inline
+    // window.B20 — ask the API for the parts the client needs (the WalletConnect id).
+    if (!cfg.walletConnectProjectId) {
+      try {
+        merge(await fetch("/api/config").then((r) => (r.ok ? r.json() : null)));
+      } catch {}
+    }
+
     const $ = (id) => document.getElementById(id);
     const erc20 = [
       { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
@@ -161,6 +204,7 @@
 
     const publicClient = createPublicClient({ chain: base, transport: http(cfg.rpc) });
     let preview = null;
+    let account = null; // connected wallet state, kept in sync by wallet.subscribe
 
     function fmt(n) {
       return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -168,6 +212,14 @@
     function setMsg(text, kind) {
       $("msg").textContent = text;
       $("msg").className = "msg" + (kind ? " " + kind : "");
+    }
+    function setMsgHtml(html, kind) {
+      $("msg").innerHTML = html;
+      $("msg").className = "msg" + (kind ? " " + kind : "");
+    }
+    function setWarn(text) {
+      $("warn").textContent = text || "";
+      $("warn").classList.toggle("hide", !text);
     }
 
     $("copy").onclick = async () => {
@@ -200,36 +252,104 @@
         $("pool").textContent = fmt(formatUnits(remaining, 18));
         $("alloc").textContent = `${fmt(formatUnits(allocation, 18))} BARK`;
         if (claimed) {
-          $("claim").disabled = true;
           setMsg(`Already claimed ${fmt(formatUnits(claimedAmount, 18))} BARK.`, "ok");
         } else if (txCount === 0) {
           setMsg("This wallet has 0 Base transactions.", "err");
+        } else if (!account?.connected) {
+          setMsg(`${txCount.toLocaleString()} tx × 70 = ${fmt(formatUnits(allocation, 18))} BARK — connect a wallet to claim.`, "ok");
         } else {
-          $("claim").disabled = false;
           setMsg(`${txCount.toLocaleString()} tx × 70 = ${fmt(formatUnits(allocation, 18))} BARK`, "ok");
         }
+        paintClaimButton();
+        paintMismatch();
       } catch (err) {
         setMsg(err.message || "Lookup failed", "err");
       }
     }
 
-    async function connect() {
-      if (!window.ethereum) {
-        setMsg("Install MetaMask, Coinbase Wallet, or Rabby.", "err");
+    /* ------------------------------------------------------------ wallet UI */
+
+    function paintClaimButton() {
+      const button = $("claim");
+      if (!account?.connected) {
+        button.textContent = "Connect Wallet";
+        button.disabled = false;
         return;
       }
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      $("wallet").value = accounts[0];
-      await lookup();
+      if (account.wrongChain) {
+        button.textContent = "Switch to Base";
+        button.disabled = false;
+        return;
+      }
+      button.textContent = "Claim BARK";
+      button.disabled = !preview || preview.claimed || preview.txCount === 0;
     }
 
+    function paintMismatch() {
+      if (!account?.connected || !preview) return setWarn("");
+      if (getAddress(preview.address) === getAddress(account.address)) return setWarn("");
+      setWarn(
+        `Heads up — you are connected as ${shortAddress(account.address)} but claiming for ` +
+        `${shortAddress(preview.address)}. The BARK lands in ${shortAddress(preview.address)}; ` +
+        `you only pay the gas.`,
+      );
+    }
+
+    let lastLookedUp = "";
+
+    wallet.subscribe((state) => {
+      account = state;
+      $("connect").classList.toggle("hide", state.connected);
+      $("pill").classList.toggle("hide", !state.connected);
+      if (state.connected) {
+        $("pillAddress").textContent = shortAddress(state.address);
+        $("walletName").textContent = state.wrongChain ? "Wrong network" : state.connector?.name || "Connected";
+        $("avatar").style.background = `linear-gradient(135deg, #${state.address.slice(2, 8)}, #${state.address.slice(-6)})`;
+      }
+      paintClaimButton();
+      paintMismatch();
+
+      // Freshly connected, or the wallet switched accounts — look that address up.
+      const key = state.connected ? state.address.toLowerCase() : "";
+      if (key && key !== lastLookedUp) {
+        lastLookedUp = key;
+        $("wallet").value = getAddress(state.address);
+        lookup().catch((err) => setMsg(err.message, "err"));
+      } else if (!key) {
+        lastLookedUp = "";
+      }
+    });
+
+    async function connect() {
+      try {
+        await wallet.connect();
+      } catch (err) {
+        if (!err?.cancelled) setMsg(err.message || "Could not connect", "err");
+      }
+    }
+
+    /* ---------------------------------------------------------------- claim */
+
     async function claim() {
-      if (!window.ethereum) {
-        setMsg("Connect a wallet that can pay Base gas.", "err");
+      if (!account?.connected) return connect();
+
+      if (account.wrongChain) {
+        setMsg("Switching your wallet to Base…");
+        await wallet.switchToBase();
+        setMsg("");
         return;
       }
-      const address = $("wallet").value.trim();
-      setMsg("Signing allocation from Base history…");
+      if (!preview) {
+        setMsg("Check an allocation first.", "err");
+        return;
+      }
+      if (!isAddress(cfg.airdrop)) {
+        setMsg("Claim contract is not configured on this deployment.", "err");
+        return;
+      }
+
+      const address = preview.address;
+      setMsg("Signing your allocation from Base history…");
       const signed = await fetch("/api/sign", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -239,40 +359,88 @@
         setMsg(signed.error, "err");
         return;
       }
-      const chainId = await window.ethereum.request({ method: "eth_chainId" });
-      if (Number(chainId) !== 8453) {
-        try {
-          await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
-        } catch {
-          setMsg("Switch your wallet to Base.", "err");
-          return;
-        }
+
+      // The wallet can drift off Base between connecting and claiming.
+      if (wallet.state.wrongChain && !(await wallet.switchToBase())) {
+        setMsg("Switch your wallet to Base to claim.", "err");
+        return;
       }
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      const wallet = createWalletClient({ account: accounts[0], chain: base, transport: custom(window.ethereum) });
-      setMsg("Confirm the claim in your wallet…");
-      const hash = await wallet.sendTransaction({
-        to: cfg.airdrop,
-        data: encodeFunctionData({
-          abi: airdropAbi,
-          functionName: "claim",
-          args: [signed.address, BigInt(signed.txCount), BigInt(signed.deadline), signed.signature],
-        }),
+
+      const client = createWalletClient({
+        account: getAddress(account.address),
+        chain: base,
+        transport: custom(wallet.getProvider()),
       });
-      setMsg(`Claim submitted: ${hash}`, "ok");
+
+      setMsg("Confirm the claim in your wallet…");
+      let hash;
+      try {
+        hash = await client.sendTransaction({
+          to: cfg.airdrop,
+          data: encodeFunctionData({
+            abi: airdropAbi,
+            functionName: "claim",
+            args: [signed.address, BigInt(signed.txCount), BigInt(signed.deadline), signed.signature],
+          }),
+        });
+      } catch (err) {
+        const rejected = err?.code === 4001 || /rejected|denied/i.test(err?.shortMessage || err?.message || "");
+        setMsg(rejected ? "You rejected the transaction." : err?.shortMessage || err?.message || "Claim failed", "err");
+        return;
+      }
+
+      const link = `https://basescan.org/tx/${hash}`;
       $("claim").disabled = true;
+      setMsgHtml(`Claim sent — <a href="${link}" target="_blank" rel="noreferrer">${hash.slice(0, 12)}…</a> waiting for Base…`, "ok");
+
+      try {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
+        if (receipt.status === "success") {
+          setMsgHtml(
+            `Claimed ${fmt(formatUnits(preview.allocation, 18))} BARK — ` +
+            `<a href="${link}" target="_blank" rel="noreferrer">view on Basescan</a>`,
+            "ok",
+          );
+          $("watchRow").classList.remove("hide");
+          refreshPool();
+        } else {
+          setMsgHtml(`Transaction reverted — <a href="${link}" target="_blank" rel="noreferrer">view on Basescan</a>`, "err");
+          paintClaimButton();
+        }
+      } catch {
+        setMsgHtml(`Still pending — <a href="${link}" target="_blank" rel="noreferrer">follow it on Basescan</a>`, "ok");
+      }
     }
 
+    function refreshPool() {
+      publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" })
+        .then((v) => { $("pool").textContent = fmt(formatUnits(v, 18)); })
+        .catch(() => {});
+    }
+
+    /* ----------------------------------------------------------------- wire */
+
     $("lookup").onclick = () => lookup().catch((e) => setMsg(e.message, "err"));
-    $("connect").onclick = () => connect().catch((e) => setMsg(e.message, "err"));
-    $("claim").onclick = () => claim().catch((e) => setMsg(e.message, "err"));
+    $("connect").onclick = connect;
+    $("disconnect").onclick = () => wallet.disconnect();
+    $("useWallet").onclick = () => {
+      if (!account?.connected) return connect();
+      $("wallet").value = getAddress(account.address);
+      return lookup().catch((e) => setMsg(e.message, "err"));
+    };
+    $("claim").onclick = () => claim().catch((e) => setMsg(e.shortMessage || e.message, "err"));
+    $("watch").onclick = () => wallet.watchAsset({ address: cfg.token, symbol: cfg.symbol || "BARK", decimals: 18 });
     $("wallet").addEventListener("keydown", (e) => {
       if (e.key === "Enter") lookup().catch((err) => setMsg(err.message, "err"));
     });
 
-    publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" })
-      .then((v) => { $("pool").textContent = fmt(formatUnits(v, 18)); })
-      .catch(() => {});
+    wallet.init({
+      projectId: cfg.walletConnectProjectId,
+      appName: "Claim BARK",
+      appUrl: window.location.origin,
+    });
+
+    refreshPool();
   </script>
 </body>
 </html>

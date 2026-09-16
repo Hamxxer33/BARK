@@ -33,18 +33,21 @@ function loadDeployed() {
 
 const env = loadEnv();
 const deployed = loadDeployed();
-const TOKEN = env.TOKEN_ADDRESS || deployed.token || "";
-const AIRDROP = env.AIRDROP_ADDRESS || deployed.airdrop || "";
+// Same live defaults the serverless handlers use, so a missing .env cannot blank these out.
+const TOKEN = env.TOKEN_ADDRESS || deployed.token || "0xB200000000000000000000B8A0253f93DE48B78c";
+const AIRDROP = env.AIRDROP_ADDRESS || deployed.airdrop || "0x3cfec2dd7480004a6902cb66f1e15e8e919c8185";
 const RPC = env.RPC_URL || env.NEXT_PUBLIC_RPC_URL || "https://mainnet.base.org";
 const PORT = Number(env.PORT || 3000);
 const TOKEN_NAME = env.TOKEN_NAME || "BARK";
 const TOKEN_SYMBOL = env.TOKEN_SYMBOL || "BARK";
+const WC_PROJECT_ID = env.WALLETCONNECT_PROJECT_ID || env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
 
 let signerKey = env.SIGNER_PRIVATE_KEY || env.PRIVATE_KEY || "";
 if (signerKey && !signerKey.startsWith("0x")) signerKey = `0x${signerKey}`;
 
 const publicClient = createPublicClient({ chain: base, transport: http(RPC) });
 const html = readFileSync(join(root, "index.html"), "utf8");
+const walletJs = readFileSync(join(root, "wallet.js"), "utf8");
 
 const CLAIM_TYPES = {
   Claim: [
@@ -105,10 +108,17 @@ const server = createServer(async (req, res) => {
         rpc: RPC,
         name: TOKEN_NAME,
         symbol: TOKEN_SYMBOL,
+        walletConnectProjectId: WC_PROJECT_ID,
       })};`,
     );
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(page);
+    return;
+  }
+
+  if (url.pathname === "/wallet.js") {
+    res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+    res.end(walletJs);
     return;
   }
 
@@ -119,6 +129,7 @@ const server = createServer(async (req, res) => {
       chainId: 8453,
       name: TOKEN_NAME,
       symbol: TOKEN_SYMBOL,
+      walletConnectProjectId: WC_PROJECT_ID,
       configured: Boolean(TOKEN && AIRDROP),
     });
     return;
