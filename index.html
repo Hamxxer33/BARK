@@ -83,6 +83,9 @@
     .task-go { margin-left: auto; color: var(--muted); }
     .task-done { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.7rem; font-size: 0.8rem; color: var(--fg); cursor: pointer; }
     .task-done input { width: 1.05rem; height: 1.05rem; accent-color: var(--primary); cursor: pointer; }
+    .task-share { width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; }
+    .task-share:disabled { opacity: 0.5; cursor: not-allowed; }
+    .task-share:disabled .task-num { background: var(--border); color: var(--muted); }
   </style>
 </head>
 <body>
@@ -154,6 +157,11 @@
             <input type="checkbox" id="taskDone" />
             <span>Done — I followed and turned on notifications</span>
           </label>
+          <button class="task-row task-share" id="taskShare" type="button" disabled>
+            <span class="task-num">3</span>
+            <span><b>Post your claim on X</b><span id="shareHint">Check an allocation first</span></span>
+            <span class="task-go" aria-hidden="true">↗</span>
+          </button>
         </div>
         <div class="row" style="margin-top:1rem">
           <button class="btn btn-primary" id="claim" type="button" disabled>Connect Wallet</button>
@@ -191,6 +199,8 @@
       walletConnectProjectId: "",
       x: "https://x.com/Barkdotfun",
       xPost: "https://x.com/Barkdotfun/status/2100238594342551649",
+      xShareText: "I just claimed {amount} $BARK 🐕\n\n15B $BARK airdrop on @base — 70 $BARK for every on-chain transaction your wallet has made.\n\nCheck what you're owed:",
+      xShareUrl: "",
     };
     // Empty values never win: a server missing AIRDROP_ADDRESS would otherwise blank out
     // the claim contract, and a transaction with no `to` is a contract deployment.
@@ -235,6 +245,24 @@
       try { value ? localStorage.setItem(TASK_KEY, "1") : localStorage.removeItem(TASK_KEY); } catch {}
     };
     let taskDone = readTask();
+
+    // The share is required before the claim transaction, and the post carries the
+    // amount being claimed — so it is tracked per address, not once per browser.
+    const sharedKey = (address) => `bark.shared.${String(address).toLowerCase()}`;
+    const readShared = (address) => {
+      try { return localStorage.getItem(sharedKey(address)) === "1"; } catch { return false; }
+    };
+    const writeShared = (address) => {
+      try { localStorage.setItem(sharedKey(address), "1"); } catch {}
+    };
+    let shared = false;
+
+    function shareIntent(amountText) {
+      const text = String(cfg.xShareText || "I just claimed {amount} $BARK").replace("{amount}", amountText);
+      const params = new URLSearchParams({ text });
+      params.set("url", cfg.xShareUrl || window.location.origin);
+      return `https://x.com/intent/post?${params}`;
+    }
 
     function fmt(n) {
       return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -290,6 +318,7 @@
         } else {
           setMsg(`${txCount.toLocaleString()} tx × 70 = ${fmt(formatUnits(allocation, 18))} BARK`, "ok");
         }
+        paintShare();
         paintClaimButton();
         paintMismatch();
       } catch (err) {
@@ -316,8 +345,31 @@
         button.disabled = true;
         return;
       }
+      const claimable = preview && !preview.claimed && preview.txCount > 0;
+      if (claimable && !shared) {
+        button.textContent = "Post on X to claim";
+        button.disabled = true;
+        return;
+      }
       button.textContent = "Claim BARK";
-      button.disabled = !preview || preview.claimed || preview.txCount === 0;
+      button.disabled = !claimable;
+    }
+
+    function paintShare() {
+      const row = $("taskShare");
+      const hint = $("shareHint");
+      if (!preview || preview.claimed || preview.txCount === 0) {
+        row.disabled = true;
+        row.classList.remove("done");
+        hint.textContent = preview?.claimed ? "Already claimed" : "Check an allocation first";
+        return;
+      }
+      shared = readShared(preview.address);
+      row.disabled = false;
+      row.classList.toggle("done", shared);
+      hint.textContent = shared
+        ? "Posted — thanks for sharing"
+        : `Required · posts ${fmt(formatUnits(preview.allocation, 18))} BARK`;
     }
 
     function paintMismatch() {
@@ -341,6 +393,7 @@
         $("walletName").textContent = state.wrongChain ? "Wrong network" : state.connector?.name || "Connected";
         $("avatar").style.background = `linear-gradient(135deg, #${state.address.slice(2, 8)}, #${state.address.slice(-6)})`;
       }
+      paintShare();
       paintClaimButton();
       paintMismatch();
 
@@ -477,6 +530,16 @@
     for (const id of ["taskFollow", "taskPost"]) {
       $(id).addEventListener("click", () => $(id).classList.add("done"));
     }
+
+    $("taskShare").onclick = () => {
+      if (!preview) return;
+      const amount = fmt(formatUnits(preview.allocation, 18));
+      window.open(shareIntent(amount), "_blank", "noopener");
+      writeShared(preview.address);
+      shared = true;
+      paintShare();
+      paintClaimButton();
+    };
     $("wallet").addEventListener("keydown", (e) => {
       if (e.key === "Enter") lookup().catch((err) => setMsg(err.message, "err"));
     });
