@@ -38,12 +38,12 @@ const WC_METHODS = [
  */
 const CDN = {
   walletconnect: [
-    "https://esm.sh/@walletconnect/universal-provider@2.25.0",
     "https://cdn.jsdelivr.net/npm/@walletconnect/universal-provider@2.25.0/+esm",
+    "https://esm.sh/@walletconnect/universal-provider@2.25.0",
   ],
   qrcode: [
-    "https://esm.sh/qrcode-generator@2.0.4",
     "https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/+esm",
+    "https://esm.sh/qrcode-generator@2.0.4",
   ],
 };
 
@@ -328,7 +328,7 @@ async function fetchWallets() {
   if (registryCache) return registryCache;
   const params = new URLSearchParams({
     projectId: config.projectId,
-    entries: "250",
+    entries: "100",
     page: "1",
   });
   if (isMobile()) params.set("platform", isAndroid() ? "android" : "ios");
@@ -904,9 +904,5 @@ export const wallet = {
     }
   },
 };
-
-export function shortAddress(value) {
-  return value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "";
-}
 
 export default wallet;

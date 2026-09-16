@@ -70,7 +70,8 @@ window.addEventListener("eip6963:requestProvider", () => {
   );
 });
 
-const { wallet, shortAddress } = await import("../wallet.js");
+const { wallet } = await import("../wallet.js");
+const { shortAddress } = await import("../chain.js");
 
 let results = [];
 const check = (name, fn) => {

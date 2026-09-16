@@ -148,9 +148,11 @@
   </div>
   <script>/*__CONFIG__*/</script>
   <script type="module">
-    import { createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, isAddress, getAddress } from "https://esm.sh/viem@2.28.0";
-    import { base } from "https://esm.sh/viem@2.28.0/chains";
-    import { wallet, shortAddress } from "./wallet.js";
+    import { wallet } from "./wallet.js";
+    import {
+      createRpc, createReader, encodeClaim, formatUnits, isAddress,
+      normalizeAddress, sameAddress, shortAddress, waitForReceipt,
+    } from "./chain.js";
 
     const FALLBACK = {
       token: "0xB200000000000000000000B8A0253f93DE48B78c",
@@ -177,32 +179,13 @@
     }
 
     const $ = (id) => document.getElementById(id);
-    const erc20 = [
-      { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
-    ];
-    const airdropAbi = [
-      { type: "function", name: "claimed", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
-      { type: "function", name: "claimedAmount", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
-      { type: "function", name: "remaining", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-      {
-        type: "function",
-        name: "claim",
-        stateMutability: "nonpayable",
-        inputs: [
-          { name: "account", type: "address" },
-          { name: "txCount", type: "uint256" },
-          { name: "deadline", type: "uint256" },
-          { name: "signature", type: "bytes" },
-        ],
-        outputs: [],
-      },
-    ];
 
     $("ca").textContent = cfg.token;
     $("tokenLink").href = `https://basescan.org/token/${cfg.token}`;
     $("airdropLink").href = `https://basescan.org/address/${cfg.airdrop}`;
 
-    const publicClient = createPublicClient({ chain: base, transport: http(cfg.rpc) });
+    const rpc = createRpc(cfg.rpc);
+    const chain = createReader(rpc, cfg.airdrop);
     let preview = null;
     let account = null; // connected wallet state, kept in sync by wallet.subscribe
 
@@ -234,17 +217,17 @@
         setMsg("Enter a valid wallet address.", "err");
         return;
       }
-      const address = getAddress(raw);
+      const address = normalizeAddress(raw);
       $("wallet").value = address;
       setMsg("Reading Base history…");
       $("claim").disabled = true;
       preview = null;
       try {
         const [txCount, remaining, claimed, claimedAmount] = await Promise.all([
-          publicClient.getTransactionCount({ address, blockTag: "latest" }),
-          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" }),
-          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "claimed", args: [address] }),
-          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "claimedAmount", args: [address] }),
+          chain.transactionCount(address),
+          chain.remaining(),
+          chain.claimed(address),
+          chain.claimedAmount(address),
         ]);
         const allocation = BigInt(txCount) * 70n * 10n ** 18n;
         preview = { address, txCount, allocation, remaining, claimed };
@@ -287,7 +270,7 @@
 
     function paintMismatch() {
       if (!account?.connected || !preview) return setWarn("");
-      if (getAddress(preview.address) === getAddress(account.address)) return setWarn("");
+      if (sameAddress(preview.address, account.address)) return setWarn("");
       setWarn(
         `Heads up — you are connected as ${shortAddress(account.address)} but claiming for ` +
         `${shortAddress(preview.address)}. The BARK lands in ${shortAddress(preview.address)}; ` +
@@ -313,7 +296,7 @@
       const key = state.connected ? state.address.toLowerCase() : "";
       if (key && key !== lastLookedUp) {
         lastLookedUp = key;
-        $("wallet").value = getAddress(state.address);
+        $("wallet").value = normalizeAddress(state.address);
         lookup().catch((err) => setMsg(err.message, "err"));
       } else if (!key) {
         lastLookedUp = "";
@@ -366,22 +349,21 @@
         return;
       }
 
-      const client = createWalletClient({
-        account: getAddress(account.address),
-        chain: base,
-        transport: custom(wallet.getProvider()),
-      });
-
       setMsg("Confirm the claim in your wallet…");
       let hash;
       try {
-        hash = await client.sendTransaction({
-          to: cfg.airdrop,
-          data: encodeFunctionData({
-            abi: airdropAbi,
-            functionName: "claim",
-            args: [signed.address, BigInt(signed.txCount), BigInt(signed.deadline), signed.signature],
-          }),
+        hash = await wallet.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: normalizeAddress(account.address),
+            to: cfg.airdrop,
+            data: encodeClaim({
+              account: signed.address,
+              txCount: signed.txCount,
+              deadline: signed.deadline,
+              signature: signed.signature,
+            }),
+          }],
         });
       } catch (err) {
         const rejected = err?.code === 4001 || /rejected|denied/i.test(err?.shortMessage || err?.message || "");
@@ -394,8 +376,9 @@
       setMsgHtml(`Claim sent — <a href="${link}" target="_blank" rel="noreferrer">${hash.slice(0, 12)}…</a> waiting for Base…`, "ok");
 
       try {
-        const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
-        if (receipt.status === "success") {
+        const receipt = await waitForReceipt(rpc, hash, { timeoutMs: 120000 });
+        if (receipt === null) throw new Error("timed out");
+        if (receipt.success) {
           setMsgHtml(
             `Claimed ${fmt(formatUnits(preview.allocation, 18))} BARK — ` +
             `<a href="${link}" target="_blank" rel="noreferrer">view on Basescan</a>`,
@@ -413,7 +396,7 @@
     }
 
     function refreshPool() {
-      publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" })
+      chain.remaining()
         .then((v) => { $("pool").textContent = fmt(formatUnits(v, 18)); })
         .catch(() => {});
     }
@@ -425,7 +408,7 @@
     $("disconnect").onclick = () => wallet.disconnect();
     $("useWallet").onclick = () => {
       if (!account?.connected) return connect();
-      $("wallet").value = getAddress(account.address);
+      $("wallet").value = normalizeAddress(account.address);
       return lookup().catch((e) => setMsg(e.message, "err"));
     };
     $("claim").onclick = () => claim().catch((e) => setMsg(e.shortMessage || e.message, "err"));

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "test": "node test/wallet.test.mjs && node test/wallet.mobile.test.mjs"
+    "test": "node test/chain.test.mjs && node test/wallet.test.mjs && node test/wallet.mobile.test.mjs"
   },
   "dependencies": {
     "viem": "^2.28.0"

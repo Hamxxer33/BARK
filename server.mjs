@@ -47,7 +47,10 @@ if (signerKey && !signerKey.startsWith("0x")) signerKey = `0x${signerKey}`;
 
 const publicClient = createPublicClient({ chain: base, transport: http(RPC) });
 const html = readFileSync(join(root, "index.html"), "utf8");
-const walletJs = readFileSync(join(root, "wallet.js"), "utf8");
+const modules = {
+  "/wallet.js": readFileSync(join(root, "wallet.js"), "utf8"),
+  "/chain.js": readFileSync(join(root, "chain.js"), "utf8"),
+};
 
 const CLAIM_TYPES = {
   Claim: [
@@ -116,9 +119,9 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === "/wallet.js") {
+  if (modules[url.pathname]) {
     res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
-    res.end(walletJs);
+    res.end(modules[url.pathname]);
     return;
   }
 
