@@ -111,11 +111,10 @@ check("modal renders with the discovered wallet", () => {
   assert.ok(names.some((n) => n.includes("Test Wallet")), `no Test Wallet in ${JSON.stringify(names)}`);
 });
 
-check("walletconnect option is disabled without a project id", () => {
-  const wc = [...document.querySelectorAll(".bw-item")].find((n) => n.textContent.includes("WalletConnect"));
-  assert.ok(wc, "no WalletConnect row");
-  assert.equal(wc.disabled, true);
-  assert.match(wc.textContent, /not configured/);
+check("without a project id there is no directory, just an explanation", () => {
+  assert.equal(document.querySelector(".bw-tiles"), null, "grid should not render");
+  assert.equal(document.querySelector(".bw-search"), null, "search should not render");
+  assert.match(document.body.textContent, /not configured on this deployment/);
 });
 
 const row = [...document.querySelectorAll(".bw-item")].find((n) => n.textContent.includes("Test Wallet"));
@@ -272,19 +271,27 @@ await wallet.init({
   modules: { walletconnect: [asModule(wcStub)], qrcode: [asModule(qrStub)] },
 });
 
-const p4 = wallet.connect();
-await new Promise((r) => setTimeout(r, 10));
-const wcRow = [...document.querySelectorAll(".bw-item")].find((n) => n.textContent.includes("WalletConnect"));
+// Directory unreachable: the dialog must still offer a usable set of wallets.
+global.fetch = async () => { throw new Error("offline"); };
 
-check("walletconnect is offered once a project id is set", () => {
-  assert.equal(wcRow.disabled, false);
-  assert.match(wcRow.textContent, /Scan with any mobile wallet/);
+const p4 = wallet.connect();
+await new Promise((r) => setTimeout(r, 30));
+
+check("the directory falls back to the built-in list when it cannot be fetched", () => {
+  // No global fetch in this file, so fetchWallets() rejects and the shortlist is used.
+  const names = [...document.querySelectorAll(".bw-tile")].map((t) => t.lastElementChild.textContent.trim());
+  assert.ok(names.includes("MetaMask"), JSON.stringify(names));
+  assert.ok(names.includes("Coinbase Wallet"), JSON.stringify(names));
+  assert.ok(names.length >= 10, `expected a usable shortlist, got ${names.length}`);
+  assert.ok(document.querySelector(".bw-search"), "search box missing");
+  assert.ok(document.querySelector(".bw-qrbtn"), "QR button missing");
 });
 
-wcRow.click();
+// On a desktop, picking a named wallet must show its QR rather than a phone deep link.
+[...document.querySelectorAll(".bw-tile")].find((t) => t.textContent.includes("MetaMask")).click();
 await new Promise((r) => setTimeout(r, 60));
 
-check("QR screen renders while the wallet is pairing", () => {
+check("picking a wallet on desktop shows a QR, not a deep link", () => {
   const svg = document.querySelector(".bw-qr svg");
   assert.ok(svg, "no QR svg rendered");
   assert.equal(svg.getAttribute("viewBox"), "0 0 7 7", "3 modules + 2 quiet zone each side");

@@ -20,8 +20,13 @@ LP NFT is at `0x…dEaD`. Supply is 100B, 80B in Uniswap v4, 5B in the project w
 - **Installed** — every browser extension that announces itself over EIP-6963
   (MetaMask, Coinbase Wallet, Rabby, Phantom …), each listed by its own name. Wallets
   older than EIP-6963 still work through `window.ethereum`.
-- **WalletConnect** — a QR code on desktop, one-tap deep links into MetaMask, Coinbase,
-  Rainbow, Trust, Uniswap, Zerion, Phantom and Ledger Live on a phone.
+- **All wallets** — a searchable grid of a few hundred wallets with their real logos,
+  pulled from the Reown/WalletConnect directory and filtered to the visitor's platform.
+  Tapping one on a phone opens that app straight into the approval screen; on a desktop
+  it shows a QR code to scan. The QR button next to the search box skips to the code.
+
+If the directory cannot be reached the grid falls back to a built-in shortlist of the
+dozen most common wallets, so the dialog is never empty.
 
 Once connected the site fills in the address, reads the allocation, and keeps the
 session across reloads. It watches for account and network changes, and offers to

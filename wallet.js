@@ -31,17 +31,6 @@ const WC_METHODS = [
   "wallet_watchAsset",
 ];
 
-/** Phone wallets we offer as one-tap deep links next to the QR code. */
-const MOBILE_WALLETS = [
-  { name: "MetaMask", link: (uri) => `https://metamask.app.link/wc?uri=${uri}` },
-  { name: "Coinbase", link: (uri) => `https://go.cb-w.com/wc?uri=${uri}` },
-  { name: "Rainbow", link: (uri) => `https://rnbwapp.com/wc?uri=${uri}` },
-  { name: "Trust", link: (uri) => `https://link.trustwallet.com/wc?uri=${uri}` },
-  { name: "Uniswap", link: (uri) => `https://uniswap.org/app/wc?uri=${uri}` },
-  { name: "Zerion", link: (uri) => `https://wallet.zerion.io/wc?uri=${uri}` },
-  { name: "Phantom", link: (uri) => `https://phantom.app/ul/wc?uri=${uri}` },
-  { name: "Ledger Live", link: (uri) => `ledgerlive://wc?uri=${uri}` },
-];
 
 /**
  * Loaded on demand, first URL that answers wins. `wallet.init({ modules })` can point
@@ -321,6 +310,91 @@ async function connectWalletConnect(onUri) {
   return adopt(wrapped, { type: "walletconnect", id: "walletconnect", name: "WalletConnect", icon: "" });
 }
 
+/* -------------------------------------------------------- wallet registry */
+
+const REGISTRY = "https://explorer-api.walletconnect.com/v3";
+let registryCache = null;
+
+const isMobile = () =>
+  typeof navigator !== "undefined" && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+const isAndroid = () => typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+
+/**
+ * The same wallet directory AppKit shows: a few hundred wallets with real logos and
+ * the deep-link scheme each one answers on. Needs the project ID, so when that is
+ * missing (or the call fails) we fall back to the shortlist below.
+ */
+async function fetchWallets() {
+  if (registryCache) return registryCache;
+  const params = new URLSearchParams({
+    projectId: config.projectId,
+    entries: "250",
+    page: "1",
+  });
+  if (isMobile()) params.set("platform", isAndroid() ? "android" : "ios");
+
+  // Don't leave people watching a spinner if the directory is slow or unreachable.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 6000);
+  let res;
+  try {
+    res = await fetch(`${REGISTRY}/wallets?${params}`, { signal: abort.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) throw new Error(`Wallet directory returned ${res.status}`);
+  const body = await res.json();
+  // v3 hands back an object keyed by wallet id; tolerate an array too.
+  const rows = Array.isArray(body.listings) ? body.listings : Object.values(body.listings || {});
+
+  registryCache = rows
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      image: row.image_id ? `${REGISTRY}/logo/md/${row.image_id}?projectId=${config.projectId}` : "",
+      native: row.mobile?.native || "",
+      universal: row.mobile?.universal || "",
+      rdns: row.rdns || "",
+      order: typeof row.order === "number" ? row.order : 1e6,
+    }))
+    .filter((row) => row.name && (row.native || row.universal))
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+  if (!registryCache.length) throw new Error("Wallet directory came back empty");
+  return registryCache;
+}
+
+/** Used when the directory cannot be reached, so the dialog is never empty. */
+const FALLBACK_WALLETS = [
+  { id: "metamask", name: "MetaMask", native: "metamask://", universal: "https://metamask.app.link" },
+  { id: "coinbase", name: "Coinbase Wallet", native: "cbwallet://", universal: "https://go.cb-w.com" },
+  { id: "rainbow", name: "Rainbow", native: "rainbow://", universal: "https://rnbwapp.com" },
+  { id: "trust", name: "Trust Wallet", native: "trust://", universal: "https://link.trustwallet.com" },
+  { id: "uniswap", name: "Uniswap", native: "uniswap://", universal: "https://uniswap.org/app" },
+  { id: "zerion", name: "Zerion", native: "zerion://", universal: "https://wallet.zerion.io" },
+  { id: "phantom", name: "Phantom", native: "phantom://", universal: "https://phantom.app/ul" },
+  { id: "okx", name: "OKX Wallet", native: "okx://", universal: "https://www.okx.com/download" },
+  { id: "bitget", name: "Bitget Wallet", native: "bitkeep://", universal: "https://bkcode.vip" },
+  { id: "safepal", name: "SafePal", native: "safepalwallet://", universal: "https://link.safepal.io" },
+  { id: "tokenpocket", name: "TokenPocket", native: "tpoutside://", universal: "https://tokenpocket.pro" },
+  { id: "ledger", name: "Ledger Live", native: "ledgerlive://", universal: "https://ledger.com/ledger-live" },
+].map((row) => ({ ...row, image: "", rdns: "", order: 0 }));
+
+/**
+ * Turns a pairing URI into a link that opens the wallet app. Native schemes are tried
+ * first — a universal link can bounce to the App Store page instead of the app.
+ */
+function walletDeepLink(entry, uri) {
+  const encoded = encodeURIComponent(uri);
+  const scheme = entry.native || "";
+  if (scheme) {
+    const base = scheme.endsWith("://") ? scheme : scheme.endsWith(":") ? `${scheme}//` : `${scheme}://`;
+    return `${base}wc?uri=${encoded}`;
+  }
+  if (entry.universal) return `${entry.universal.replace(/\/+$/, "")}/wc?uri=${encoded}`;
+  return "";
+}
+
 /* ----------------------------------------------------------------- modal */
 
 const STYLES = `
@@ -343,11 +417,25 @@ const STYLES = `
 .bw-qr { display: grid; place-items: center; margin: 0 auto; width: fit-content; padding: 0.75rem; border-radius: 0.7rem; background: #fff; }
 .bw-qr svg { display: block; width: 13.5rem; height: 13.5rem; }
 .bw-uri { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
-.bw-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
-.bw-grid .bw-item { font-size: 0.85rem; padding: 0.6rem 0.7rem; }
 .bw-err { margin-top: 0.75rem; font-size: 0.82rem; line-height: 1.5; color: var(--danger, #ff5c7a); word-break: break-word; }
 .bw-spin { display: inline-block; width: 0.85rem; height: 0.85rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: bw-rotate 0.7s linear infinite; }
 @keyframes bw-rotate { to { transform: rotate(360deg); } }
+.bw-tools { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+.bw-search { flex: 1; min-width: 0; border: 0; border-radius: 0.6rem; background: var(--surface-2, #161c28); color: var(--fg, #eef3f8); padding: 0.7rem 0.85rem; font: inherit; font-size: 0.9rem; outline: none; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06); }
+.bw-search::placeholder { color: var(--muted, #8b93a7); }
+.bw-search:focus { box-shadow: 0 0 0 1px rgb(61 220 255 / 0.45); }
+.bw-qrbtn { display: grid; place-items: center; flex: none; width: 2.7rem; border: 0; border-radius: 0.6rem; background: var(--surface-2, #161c28); color: var(--fg, #eef3f8); cursor: pointer; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06); }
+.bw-qrbtn:hover, .bw-qrbtn[aria-pressed="true"] { box-shadow: 0 0 0 1px rgb(61 220 255 / 0.45); }
+.bw-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; }
+.bw-tile { display: flex; flex-direction: column; align-items: center; gap: 0.45rem; border: 0; border-radius: 0.7rem; background: var(--surface-2, #161c28); color: var(--fg, #eef3f8); padding: 0.8rem 0.4rem; font: inherit; cursor: pointer; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06); }
+.bw-tile:hover { box-shadow: 0 0 0 1px rgb(61 220 255 / 0.4); }
+.bw-tile span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.73rem; }
+.bw-logo { display: grid; place-items: center; width: 3rem; height: 3rem; border-radius: 0.75rem; overflow: hidden; background: #0b0f18; font-size: 1.1rem; font-weight: 700; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.06); }
+.bw-logo img { width: 100%; height: 100%; object-fit: cover; }
+.bw-badge { position: relative; }
+.bw-badge::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 0.85rem; height: 0.85rem; border-radius: 50%; background: #3396ff; box-shadow: 0 0 0 2px var(--surface-2, #161c28); }
+.bw-scroll { max-height: 22rem; overflow-y: auto; margin: 0 -0.25rem; padding: 0 0.25rem; }
+.bw-empty { padding: 1.5rem 0; text-align: center; font-size: 0.85rem; color: var(--muted, #8b93a7); }
 `;
 
 let styleInjected = false;
@@ -390,9 +478,6 @@ function qrSvg(matrix) {
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges" role="img" aria-label="WalletConnect QR code"><path fill="#fff" d="M0 0h${size}v${size}H0z"/><path fill="#05060a" d="${path}"/></svg>`;
 }
-
-const isMobile = () =>
-  typeof navigator !== "undefined" && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
 function openModal() {
   ensureStyles();
@@ -449,60 +534,109 @@ function openModal() {
     body.appendChild(el("p", { class: "bw-err", text: message }));
   };
 
-  /* --- screen 1: pick a wallet --- */
+  /* --- screen 1: installed wallets + the searchable directory --- */
+
+  let query = "";
+  let showQr = false;
+
   function renderPicker() {
     body.replaceChildren();
-    const injected = listInjected();
 
+    const injected = listInjected();
     if (injected.length) {
       body.appendChild(el("p", { class: "bw-sep", text: "Installed" }));
       const list = el("div", { class: "bw-list" });
       for (const entry of injected) {
         list.appendChild(
-          el("button", {
-            class: "bw-item",
-            type: "button",
-            onclick: () => useInjected(entry),
-          }, [walletIcon(entry.name, entry.icon), el("span", { text: entry.name })]),
+          el("button", { class: "bw-item", type: "button", onclick: () => useInjected(entry) }, [
+            walletIcon(entry.name, entry.icon),
+            el("span", { text: entry.name }),
+          ]),
         );
       }
       body.appendChild(list);
     }
 
-    body.appendChild(el("p", { class: "bw-sep", text: injected.length ? "Or use your phone" : "Choose a wallet" }));
-    const wcButton = el("button", {
-      class: "bw-item",
-      type: "button",
-      disabled: config.projectId ? null : "",
-      onclick: () => renderWalletConnect(),
-    }, [
-      walletIcon("WalletConnect", ""),
-      el("span", {}, [
-        el("span", { text: "WalletConnect" }),
-        el("span", {
-          class: "bw-sub",
-          text: config.projectId
-            ? "Scan with any mobile wallet"
-            : "Unavailable — project ID not configured",
-        }),
-      ]),
-    ]);
-    body.appendChild(el("div", { class: "bw-list" }, [wcButton]));
-
-    if (!injected.length) {
+    if (!config.projectId) {
       body.appendChild(
         el("p", {
           class: "bw-hint",
-          text: "No browser wallet detected. Install MetaMask, Coinbase Wallet or Rabby, or connect your phone with WalletConnect.",
+          text: injected.length
+            ? "Other wallets need WalletConnect, which is not configured on this deployment."
+            : "No wallet found in this browser, and WalletConnect is not configured on this deployment.",
         }),
       );
+      return;
     }
+
+    body.appendChild(el("p", { class: "bw-sep", text: injected.length ? "All wallets" : "Choose your wallet" }));
+
+    const search = el("input", {
+      class: "bw-search",
+      type: "search",
+      placeholder: "Search wallet",
+      "aria-label": "Search wallet",
+      value: query,
+    });
+    const qrButton = el("button", {
+      class: "bw-qrbtn",
+      type: "button",
+      "aria-label": "Show QR code",
+      "aria-pressed": String(showQr),
+      html: '<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M3 3h5v5H3V3zm1.5 1.5v2h2v-2h-2zM12 3h5v5h-5V3zm1.5 1.5v2h2v-2h-2zM3 12h5v5H3v-5zm1.5 1.5v2h2v-2h-2zM12 12h2v2h-2v-2zm3 0h2v2h-2v-2zm-3 3h2v2h-2v-2zm3 0h2v2h-2v-2z"/></svg>',
+      onclick: () => {
+        showQr = true;
+        startPairing(null);
+      },
+    });
+    body.appendChild(el("div", { class: "bw-tools" }, [search, qrButton]));
+
+    const scroll = el("div", { class: "bw-scroll" });
+    const tiles = el("div", { class: "bw-tiles" });
+    scroll.appendChild(tiles);
+    body.appendChild(scroll);
+
+    let all = [];
+    const paint = () => {
+      const needle = query.trim().toLowerCase();
+      const rows = needle ? all.filter((row) => row.name.toLowerCase().includes(needle)) : all;
+      tiles.replaceChildren();
+      if (!rows.length) {
+        tiles.appendChild(el("p", { class: "bw-empty", style: "grid-column:1/-1", text: needle ? `No wallet matches "${query}"` : "No wallets available" }));
+        return;
+      }
+      for (const row of rows) {
+        const logo = row.image
+          ? el("span", { class: "bw-logo bw-badge" }, [el("img", { src: row.image, alt: "", loading: "lazy" })])
+          : el("span", { class: "bw-logo bw-badge", text: row.name.slice(0, 1).toUpperCase() });
+        tiles.appendChild(
+          el("button", { class: "bw-tile", type: "button", title: row.name, onclick: () => startPairing(row) }, [
+            logo,
+            el("span", { text: row.name }),
+          ]),
+        );
+      }
+    };
+
+    search.addEventListener("input", () => {
+      query = search.value;
+      paint();
+    });
+
+    tiles.appendChild(el("p", { class: "bw-empty", style: "grid-column:1/-1", text: "Loading wallets…" }));
+    fetchWallets()
+      .then((rows) => {
+        all = rows;
+        paint();
+      })
+      .catch(() => {
+        all = FALLBACK_WALLETS;
+        paint();
+      });
   }
 
   async function useInjected(entry) {
-    body.replaceChildren(
-      el("p", { class: "bw-hint", text: `Approve the connection in ${entry.name}…` }),
-    );
+    body.replaceChildren(el("p", { class: "bw-hint", text: `Approve the connection in ${entry.name}…` }));
     try {
       await entry.provider.request({ method: "eth_requestAccounts" });
       const state = await adopt(entry.provider, {
@@ -518,73 +652,90 @@ function openModal() {
     }
   }
 
-  /* --- screen 2: WalletConnect QR + deep links --- */
-  async function renderWalletConnect() {
+  /* --- screen 2: pairing, as a QR code or a hand-off into the chosen app --- */
+
+  function renderWaiting(entry) {
+    const logo = entry?.image
+      ? el("span", { class: "bw-logo" }, [el("img", { src: entry.image, alt: "" })])
+      : null;
     body.replaceChildren(
-      el("p", { class: "bw-hint" }, [
-        el("span", { class: "bw-spin" }),
-        el("span", { text: " Starting WalletConnect…" }),
+      el("div", { style: "display:grid;place-items:center;gap:0.75rem;padding:1.25rem 0" }, [
+        logo,
+        el("p", { class: "bw-hint", style: "margin:0;text-align:center" }, [
+          el("span", { class: "bw-spin" }),
+          el("span", { text: entry ? ` Opening ${entry.name}…` : " Starting WalletConnect…" }),
+        ]),
       ]),
     );
+  }
+
+  async function renderQr(uri) {
+    body.replaceChildren(el("p", { class: "bw-hint", text: "Scan this with the wallet app on your phone." }));
+    let drawn = false;
+    try {
+      const mod = await loadModule("qrcode");
+      const qrcode = mod.default || mod;
+      const matrix = qrcode(0, "L");
+      matrix.addData(uri);
+      matrix.make();
+      body.appendChild(el("div", { class: "bw-qr", html: qrSvg(matrix) }));
+      drawn = true;
+    } catch {
+      /* no QR library — the copy button below is the way through */
+    }
+    const copy = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
+      el("span", { text: drawn ? "Copy link instead" : "Copy connection link" }),
+    ]);
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(uri);
+        copy.replaceChildren(el("span", { text: "Copied — paste it in your wallet" }));
+      } catch {
+        copy.replaceChildren(el("span", { text: `${uri.slice(0, 28)}…` }));
+      }
+    });
+    body.appendChild(el("div", { class: "bw-uri" }, [copy]));
+  }
+
+  /** entry === null means "just show me the QR". */
+  async function startPairing(entry) {
+    renderWaiting(entry);
+    let handedOff = false;
 
     const onUri = async (uri) => {
-      const encoded = encodeURIComponent(uri);
-      body.replaceChildren();
+      // Those deep links are phone schemes — on a desktop the QR is the way across.
+      if (!entry || !isMobile()) return renderQr(uri);
+      const link = walletDeepLink(entry, uri);
+      if (!link) return renderQr(uri);
 
-      if (isMobile()) {
-        body.appendChild(el("p", { class: "bw-hint", text: "Open the wallet app you use, then approve the connection." }));
-        const grid = el("div", { class: "bw-grid" });
-        for (const entry of MOBILE_WALLETS) {
-          grid.appendChild(
-            el("a", { class: "bw-item", href: entry.link(encoded), target: "_blank", rel: "noreferrer" }, [
-              walletIcon(entry.name, ""),
-              el("span", { text: entry.name }),
-            ]),
-          );
-        }
-        body.appendChild(grid);
-        body.appendChild(el("p", { class: "bw-sep", text: "Other wallets" }));
-      } else {
-        body.appendChild(el("p", { class: "bw-hint", text: "Scan this with the wallet app on your phone." }));
-      }
+      // Safari only honours the hand-off while it still counts as user-initiated.
+      window.location.href = link;
+      handedOff = true;
 
-      let qrRendered = false;
-      if (!isMobile()) {
-        try {
-          const mod = await loadModule("qrcode");
-          const qrcode = mod.default || mod;
-          const matrix = qrcode(0, "L");
-          matrix.addData(uri);
-          matrix.make();
-          body.appendChild(el("div", { class: "bw-qr", html: qrSvg(matrix) }));
-          qrRendered = true;
-        } catch {
-          /* fall through to the copy-the-link path below */
-        }
-      }
-
-      const copy = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
-        el("span", { text: qrRendered ? "Copy link instead" : "Copy connection link" }),
+      body.replaceChildren(
+        el("div", { style: "display:grid;place-items:center;gap:0.75rem;padding:1rem 0" }, [
+          entry.image ? el("span", { class: "bw-logo" }, [el("img", { src: entry.image, alt: "" })]) : null,
+          el("p", { class: "bw-hint", style: "margin:0;text-align:center", text: `Continue in ${entry.name}, then come back to this tab.` }),
+        ]),
+      );
+      const retry = el("button", { class: "bw-item", type: "button", style: "justify-content:center" }, [
+        el("span", { text: `Open ${entry.name} again` }),
       ]);
-      copy.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(uri);
-          copy.replaceChildren(el("span", { text: "Copied — paste it in your wallet" }));
-        } catch {
-          copy.replaceChildren(el("span", { text: uri.slice(0, 28) + "…" }));
-        }
-      });
-      body.appendChild(el("div", { class: "bw-uri" }, [copy]));
+      retry.addEventListener("click", () => { window.location.href = link; });
+      body.appendChild(el("div", { class: "bw-uri" }, [retry]));
     };
 
     try {
       const state = await connectWalletConnect(onUri);
       finish(state);
     } catch (err) {
+      showQr = false;
       renderPicker();
       const message = /Proposal expired/i.test(err?.message || "")
-        ? "The connection request expired. Try again."
-        : err?.message || "WalletConnect failed";
+        ? "That request expired. Pick your wallet again."
+        : handedOff && /rejected|cancel/i.test(err?.message || "")
+          ? `${entry?.name || "The wallet"} rejected the connection.`
+          : err?.message || "WalletConnect failed";
       showError(message);
     }
   }
