@@ -1,0 +1,12 @@
+{
+  "name": "bark-claim",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.28.0"
+  }
+}

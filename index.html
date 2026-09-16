@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claim BARK</title>
+  <meta name="description" content="Claim BARK on Base. 70 BARK per on-chain transaction." />
+  <meta name="theme-color" content="#05060a" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Pixelify+Sans:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2305060a'/%3E%3Ccircle cx='16' cy='18' r='7' fill='%23f0a020'/%3E%3Ccircle cx='8' cy='10' r='3.2' fill='%23f0a020'/%3E%3Ccircle cx='24' cy='10' r='3.2' fill='%23f0a020'/%3E%3Ccircle cx='11' cy='7' r='2.4' fill='%23f0a020'/%3E%3Ccircle cx='21' cy='7' r='2.4' fill='%23f0a020'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #05060a;
+      --surface: #0e121c;
+      --surface-2: #161c28;
+      --fg: #eef3f8;
+      --muted: #8b93a7;
+      --primary: #3ddcff;
+      --accent: #0052ff;
+      --border: #243044;
+      --success: #5cffc4;
+      --danger: #ff5c7a;
+      --moon: #f0a020;
+      --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+      --font-display: "Pixelify Sans", "Outfit", ui-sans-serif, system-ui, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+      --shadow-border: 0 0 0 1px rgb(255 255 255 / 0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100dvh; background: var(--bg); color: var(--fg); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+    button:not(:disabled), [role="button"] { cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    .page { position: relative; min-height: 100dvh; overflow-x: hidden; }
+    .bg { pointer-events: none; position: fixed; inset: 0; z-index: -1; }
+    .bg-glow-a { position: absolute; width: 520px; height: 520px; left: 50%; top: -180px; transform: translateX(-50%); background: radial-gradient(circle, rgb(0 82 255 / 0.28), transparent 68%); }
+    .bg-glow-b { position: absolute; width: 420px; height: 420px; right: -80px; bottom: 8%; background: radial-gradient(circle, rgb(240 160 32 / 0.16), transparent 70%); }
+    .wrap { margin: 0 auto; display: flex; min-height: 100dvh; width: 100%; max-width: 28rem; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem; padding: 4rem 1.25rem; }
+    .mark { width: 3.5rem; height: 3.5rem; border-radius: 0.75rem; background: #0b0f18; box-shadow: var(--shadow-border); display: grid; place-items: center; }
+    h1 { font-family: var(--font-display); font-size: clamp(2.6rem, 10vw, 3.6rem); font-weight: 600; letter-spacing: 0.04em; }
+    .card { width: 100%; border-radius: 0.75rem; background: var(--surface); padding: 1.25rem; box-shadow: var(--shadow-border); }
+    .kicker { font-size: 0.75rem; font-weight: 500; letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; }
+    .ca { margin-top: 0.75rem; display: flex; align-items: center; gap: 0.5rem; border-radius: 0.5rem; background: var(--surface-2); padding: 0.5rem 0.5rem 0.5rem 0.75rem; box-shadow: var(--shadow-border); }
+    .ca code { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.75rem; }
+    label { display: block; margin-top: 1rem; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.04em; color: var(--muted); }
+    input { width: 100%; margin-top: 0.5rem; border: 0; border-radius: 0.5rem; background: var(--surface-2); color: var(--fg); padding: 0.85rem 0.9rem; font: 0.95rem var(--font-mono); outline: none; box-shadow: var(--shadow-border); }
+    input:focus { box-shadow: 0 0 0 1px rgb(61 220 255 / 0.45); }
+    .row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem; width: 100%; border: 0; border-radius: 0.5rem; padding: 0.95rem 1rem; font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; letter-spacing: 0.04em; }
+    .btn-primary { background: var(--primary); color: #041018; box-shadow: 0 0 0 1px rgb(61 220 255 / 0.35), 0 8px 28px rgb(61 220 255 / 0.12); }
+    .btn-outline { background: var(--surface-2); color: var(--fg); box-shadow: var(--shadow-border); font-family: var(--font-sans); font-size: 0.9rem; }
+    .btn:disabled { opacity: 0.45; }
+    .ghost { background: transparent; color: var(--fg); }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem; }
+    .stat { border-radius: 0.5rem; background: var(--surface-2); padding: 0.75rem; box-shadow: var(--shadow-border); }
+    .stat p { font-size: 0.75rem; color: var(--muted); }
+    .stat b { display: block; margin-top: 0.2rem; font-size: 1.05rem; }
+    .total { margin-top: 1rem; }
+    .total b { display: block; font-family: var(--font-display); font-size: 1.85rem; font-weight: 600; }
+    .msg { margin-top: 0.85rem; font-size: 0.875rem; line-height: 1.5; color: var(--muted); word-break: break-word; min-height: 1.2em; }
+    .msg.ok { color: var(--success); }
+    .msg.err { color: var(--danger); }
+    .fine { text-align: center; font-size: 0.75rem; line-height: 1.5; color: var(--muted); }
+    .fine a { color: var(--primary); text-decoration: none; }
+    .links { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="bg"><div class="bg-glow-a"></div><div class="bg-glow-b"></div></div>
+    <main class="wrap">
+      <div class="mark" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="19" r="7" fill="#f0a020"/>
+          <circle cx="8" cy="10" r="3.1" fill="#f0a020"/>
+          <circle cx="24" cy="10" r="3.1" fill="#f0a020"/>
+          <circle cx="11" cy="7" r="2.3" fill="#f0a020"/>
+          <circle cx="21" cy="7" r="2.3" fill="#f0a020"/>
+        </svg>
+      </div>
+      <h1>Claim BARK</h1>
+
+      <section class="card">
+        <p class="kicker">Contract address</p>
+        <div class="ca">
+          <code id="ca">0xB200000000000000000000B8A0253f93DE48B78c</code>
+          <button class="btn btn-outline" id="copy" type="button" style="width:auto;padding:0.55rem 0.8rem">Copy</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 style="font-family:var(--font-display);font-size:1.25rem;font-weight:600;letter-spacing:.04em">Check your allocation</h2>
+        <p class="msg" style="margin-top:0.5rem">Enter any Base wallet. We read its on-chain transaction count and pay <b style="color:var(--fg)">70 BARK per transaction</b>.</p>
+        <label for="wallet">Wallet address</label>
+        <input id="wallet" placeholder="0x…" spellcheck="false" autocomplete="off" />
+        <div class="row">
+          <button class="btn btn-outline" id="lookup" type="button">Check Allocation</button>
+          <button class="btn btn-outline" id="connect" type="button">Use my wallet</button>
+        </div>
+        <div class="stats">
+          <div class="stat"><p>Base transactions</p><b id="txs">—</b></div>
+          <div class="stat"><p>Pool remaining</p><b id="pool">—</b></div>
+        </div>
+        <div class="total">
+          <p class="kicker">Total allocation</p>
+          <b id="alloc">—</b>
+        </div>
+        <div class="row" style="margin-top:1rem">
+          <button class="btn btn-primary" id="claim" type="button" disabled>Claim BARK</button>
+        </div>
+        <p class="msg" id="msg"></p>
+      </section>
+
+      <p class="fine">Base only · 15B BARK airdrop · LP locked forever</p>
+      <p class="fine links">
+        <a id="tokenLink" href="https://basescan.org/token/0xB200000000000000000000B8A0253f93DE48B78c" target="_blank" rel="noreferrer">Token</a>
+        <a id="airdropLink" href="https://basescan.org/address/0x3cfec2dd7480004a6902cb66f1e15e8e919c8185" target="_blank" rel="noreferrer">Claim contract</a>
+        <a href="https://app.uniswap.org/explore/tokens/base/0xB200000000000000000000B8A0253f93DE48B78c" target="_blank" rel="noreferrer">Uniswap</a>
+      </p>
+    </main>
+  </div>
+  <script>/*__CONFIG__*/</script>
+  <script type="module">
+    import { createPublicClient, createWalletClient, custom, encodeFunctionData, formatUnits, http, isAddress, getAddress } from "https://esm.sh/viem@2.28.0";
+    import { base } from "https://esm.sh/viem@2.28.0/chains";
+
+    const FALLBACK = {
+      token: "0xB200000000000000000000B8A0253f93DE48B78c",
+      airdrop: "0x3cfec2dd7480004a6902cb66f1e15e8e919c8185",
+      rpc: "https://mainnet.base.org",
+      chainId: 8453,
+      symbol: "BARK",
+    };
+    const cfg = Object.assign({}, FALLBACK, window.B20 || {});
+    const $ = (id) => document.getElementById(id);
+    const erc20 = [
+      { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+    ];
+    const airdropAbi = [
+      { type: "function", name: "claimed", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
+      { type: "function", name: "claimedAmount", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+      { type: "function", name: "remaining", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+      {
+        type: "function",
+        name: "claim",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "account", type: "address" },
+          { name: "txCount", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+          { name: "signature", type: "bytes" },
+        ],
+        outputs: [],
+      },
+    ];
+
+    $("ca").textContent = cfg.token;
+    $("tokenLink").href = `https://basescan.org/token/${cfg.token}`;
+    $("airdropLink").href = `https://basescan.org/address/${cfg.airdrop}`;
+
+    const publicClient = createPublicClient({ chain: base, transport: http(cfg.rpc) });
+    let preview = null;
+
+    function fmt(n) {
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+    function setMsg(text, kind) {
+      $("msg").textContent = text;
+      $("msg").className = "msg" + (kind ? " " + kind : "");
+    }
+
+    $("copy").onclick = async () => {
+      try { await navigator.clipboard.writeText(cfg.token); } catch {}
+      $("copy").textContent = "Copied";
+      setTimeout(() => { $("copy").textContent = "Copy"; }, 1400);
+    };
+
+    async function lookup() {
+      const raw = $("wallet").value.trim();
+      if (!isAddress(raw)) {
+        setMsg("Enter a valid wallet address.", "err");
+        return;
+      }
+      const address = getAddress(raw);
+      $("wallet").value = address;
+      setMsg("Reading Base history…");
+      $("claim").disabled = true;
+      preview = null;
+      try {
+        const [txCount, remaining, claimed, claimedAmount] = await Promise.all([
+          publicClient.getTransactionCount({ address, blockTag: "latest" }),
+          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" }),
+          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "claimed", args: [address] }),
+          publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "claimedAmount", args: [address] }),
+        ]);
+        const allocation = BigInt(txCount) * 70n * 10n ** 18n;
+        preview = { address, txCount, allocation, remaining, claimed };
+        $("txs").textContent = txCount.toLocaleString();
+        $("pool").textContent = fmt(formatUnits(remaining, 18));
+        $("alloc").textContent = `${fmt(formatUnits(allocation, 18))} BARK`;
+        if (claimed) {
+          $("claim").disabled = true;
+          setMsg(`Already claimed ${fmt(formatUnits(claimedAmount, 18))} BARK.`, "ok");
+        } else if (txCount === 0) {
+          setMsg("This wallet has 0 Base transactions.", "err");
+        } else {
+          $("claim").disabled = false;
+          setMsg(`${txCount.toLocaleString()} tx × 70 = ${fmt(formatUnits(allocation, 18))} BARK`, "ok");
+        }
+      } catch (err) {
+        setMsg(err.message || "Lookup failed", "err");
+      }
+    }
+
+    async function connect() {
+      if (!window.ethereum) {
+        setMsg("Install MetaMask, Coinbase Wallet, or Rabby.", "err");
+        return;
+      }
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      $("wallet").value = accounts[0];
+      await lookup();
+    }
+
+    async function claim() {
+      if (!window.ethereum) {
+        setMsg("Connect a wallet that can pay Base gas.", "err");
+        return;
+      }
+      const address = $("wallet").value.trim();
+      setMsg("Signing allocation from Base history…");
+      const signed = await fetch("/api/sign", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address }),
+      }).then((r) => r.json()).catch(() => ({ error: "Sign server is not running." }));
+      if (signed.error) {
+        setMsg(signed.error, "err");
+        return;
+      }
+      const chainId = await window.ethereum.request({ method: "eth_chainId" });
+      if (Number(chainId) !== 8453) {
+        try {
+          await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+        } catch {
+          setMsg("Switch your wallet to Base.", "err");
+          return;
+        }
+      }
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const wallet = createWalletClient({ account: accounts[0], chain: base, transport: custom(window.ethereum) });
+      setMsg("Confirm the claim in your wallet…");
+      const hash = await wallet.sendTransaction({
+        to: cfg.airdrop,
+        data: encodeFunctionData({
+          abi: airdropAbi,
+          functionName: "claim",
+          args: [signed.address, BigInt(signed.txCount), BigInt(signed.deadline), signed.signature],
+        }),
+      });
+      setMsg(`Claim submitted: ${hash}`, "ok");
+      $("claim").disabled = true;
+    }
+
+    $("lookup").onclick = () => lookup().catch((e) => setMsg(e.message, "err"));
+    $("connect").onclick = () => connect().catch((e) => setMsg(e.message, "err"));
+    $("claim").onclick = () => claim().catch((e) => setMsg(e.message, "err"));
+    $("wallet").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") lookup().catch((err) => setMsg(err.message, "err"));
+    });
+
+    publicClient.readContract({ address: cfg.airdrop, abi: airdropAbi, functionName: "remaining" })
+      .then((v) => { $("pool").textContent = fmt(formatUnits(v, 18)); })
+      .catch(() => {});
+  </script>
+</body>
+</html>
