@@ -1,5 +1,5 @@
 /**
- * Compiles and deploys BarkClaimPass + BarkClaimMint to Base, then wires them together.
+ * Compiles and deploys BarkClaimPass to Base.
  *
  * Built to run on a phone: solc and viem are both plain JavaScript, so Termux needs
  * nothing heavier than Node.
@@ -33,12 +33,9 @@ const OWNER = process.env.OWNER ? getAddress(process.env.OWNER) : account.addres
 /* --------------------------------------------------------------- compile */
 
 function compile() {
-  const sources = {};
-  for (const name of ["BarkClaimPass", "BarkClaimMint"]) {
-    const path = `contracts/${name}.sol`;
-    if (!existsSync(path)) throw new Error(`missing ${path} — run this from the repo root`);
-    sources[path] = { content: readFileSync(path, "utf8") };
-  }
+  const path = "contracts/BarkClaimPass.sol";
+  if (!existsSync(path)) throw new Error(`missing ${path} — run this from the repo root`);
+  const sources = { [path]: { content: readFileSync(path, "utf8") } };
   const out = JSON.parse(solc.compile(
     JSON.stringify({
       language: "Solidity",
@@ -64,14 +61,8 @@ function compile() {
     for (const e of errors) console.error(e.formattedMessage);
     throw new Error("compilation failed");
   }
-  const pick = (file, name) => {
-    const c = out.contracts[file][name];
-    return { abi: c.abi, bytecode: `0x${c.evm.bytecode.object}` };
-  };
-  return {
-    pass: pick("contracts/BarkClaimPass.sol", "BarkClaimPass"),
-    mint: pick("contracts/BarkClaimMint.sol", "BarkClaimMint"),
-  };
+  const c = out.contracts["contracts/BarkClaimPass.sol"].BarkClaimPass;
+  return { abi: c.abi, bytecode: `0x${c.evm.bytecode.object}` };
 }
 
 /* ---------------------------------------------------------------- deploy */
@@ -94,7 +85,7 @@ async function deploy(label, { abi, bytecode }, args) {
 
 async function main() {
   console.log("Compiling…");
-  const artifacts = compile();
+  const pass = compile();
 
   const chainId = await publicClient.getChainId();
   const balance = await publicClient.getBalance({ address: account.address });
@@ -107,7 +98,7 @@ async function main() {
   console.log("  owner     ", OWNER);
   console.log("  treasury  ", TREASURY, "  <- mint proceeds land here");
   console.log("  airdrop   ", getAddress(AIRDROP), airdropCode && airdropCode !== "0x" ? "(has code)" : "(NO CODE — wrong address?)");
-  console.log("  price     ", formatEther(PRICE_WEI), "ETH per claim");
+  console.log("  price     ", formatEther(PRICE_WEI), "ETH per pass");
 
   if (chainId !== 8453) throw new Error(`expected Base (8453), got ${chainId}`);
   if (!airdropCode || airdropCode === "0x") throw new Error("airdrop address has no contract code");
@@ -115,36 +106,22 @@ async function main() {
   if (!isAddress(TREASURY) || !isAddress(OWNER)) throw new Error("bad owner/treasury address");
 
   console.log("\nDeploying…");
-  const passAddress = await deploy("BarkClaimPass", artifacts.pass, [OWNER]);
-  const mintAddress = passAddress
-    ? await deploy("BarkClaimMint", artifacts.mint, [OWNER, getAddress(AIRDROP), passAddress, TREASURY, PRICE_WEI])
-    : await deploy("BarkClaimMint", artifacts.mint, [OWNER, getAddress(AIRDROP), account.address, TREASURY, PRICE_WEI]);
+  const address = await deploy("BarkClaimPass", pass, [OWNER, getAddress(AIRDROP), TREASURY, PRICE_WEI]);
 
   if (!CONFIRM) {
     console.log("\nDry run only — nothing was sent. Re-run with CONFIRM=yes to deploy.");
     return;
   }
 
-  // Without this the pass rejects every mint, so it is part of the deploy, not a follow-up.
-  console.log("\nAuthorising the mint contract to mint passes…");
-  const hash = await wallet.sendTransaction({
-    to: passAddress,
-    data: encodeFunctionData({ abi: artifacts.pass.abi, functionName: "setMinter", args: [mintAddress] }),
-  });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error("setMinter reverted");
-  console.log("  setMinter:", hash);
+  // Read the price back so a wrong constructor argument shows up now, not later.
+  const onChainPrice = await publicClient.readContract({ address, abi: pass.abi, functionName: "price" });
+  if (onChainPrice !== PRICE_WEI) throw new Error(`price reads ${onChainPrice}, expected ${PRICE_WEI}`);
 
-  const minter = await publicClient.readContract({ address: passAddress, abi: artifacts.pass.abi, functionName: "minter" });
-  if (getAddress(minter) !== mintAddress) throw new Error(`minter is ${minter}, expected ${mintAddress}`);
-
-  writeFileSync("deployed.json", JSON.stringify({ pass: passAddress, mint: mintAddress, treasury: TREASURY, priceWei: PRICE_WEI.toString() }, null, 2));
+  writeFileSync("deployed.json", JSON.stringify({ pass: address, treasury: TREASURY, priceWei: PRICE_WEI.toString() }, null, 2));
 
   console.log("\nDone.");
-  console.log("  BarkClaimPass", passAddress);
-  console.log("  BarkClaimMint", mintAddress);
-  console.log("\nSet this in Vercel, then redeploy:");
-  console.log("  MINT_ADDRESS=" + mintAddress);
+  console.log("  BarkClaimPass", address);
+  console.log("\nSend me that address and I will wire it into the site.");
 }
 
 main().catch((err) => {
