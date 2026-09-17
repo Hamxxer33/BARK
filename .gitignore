@@ -1,3 +1,6 @@
 node_modules
 .env
 .env.local
+# Written by scripts/deploy.mjs. Kept out of the repo so a local or test deploy can
+# never reach production by accident — production reads MINT_ADDRESS from the env.
+deployed.json

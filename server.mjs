@@ -22,13 +22,15 @@ function loadEnv() {
 }
 
 function loadDeployed() {
-  const p = join(repo, "deployed.json");
-  if (!existsSync(p)) return {};
-  try {
-    return JSON.parse(readFileSync(p, "utf8"));
-  } catch {
-    return {};
+  for (const p of [join(root, "deployed.json"), join(repo, "deployed.json")]) {
+    if (!existsSync(p)) continue;
+    try {
+      return JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      /* unreadable file should not take the server down */
+    }
   }
+  return {};
 }
 
 const env = loadEnv();
