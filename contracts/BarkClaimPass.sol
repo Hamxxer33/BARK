@@ -116,7 +116,7 @@ contract BarkClaimPass is ERC721, Ownable {
         Pass memory p = passes[tokenId];
         string memory json = string.concat(
             '{"name":"BARK Claim Pass #', tokenId.toString(),
-            '","description":"Minted when this wallet claimed its BARK airdrop on Base. Mint proceeds seeded the BARK liquidity pool.',
+            '","description":"Minted when this wallet claimed its BARK airdrop on Base.',
             '","image":"data:image/svg+xml;base64,', Base64.encode(bytes(_svg(tokenId, p))),
             '","attributes":[',
             '{"trait_type":"Tier","value":"', tierOf(p.txCount), '"},',

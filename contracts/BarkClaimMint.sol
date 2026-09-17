@@ -19,9 +19,11 @@ interface IB20Airdrop {
  * used — if it enforces msg.sender == account, this contract cannot work and the
  * mint has to be a separate transaction.
  *
- * Mint proceeds go to `treasury`, which is intended to be the wallet that seeds
- * the pool. Nothing here adds liquidity by itself; that is a manual step, so the
- * treasury address should be public and its movements verifiable.
+ * Mint proceeds go to `treasury` and stop there. This contract never adds liquidity,
+ * never holds a balance, and makes no promise about what the proceeds are used for —
+ * whatever is claimed about them belongs on the website, where it can be corrected,
+ * not in metadata that outlives the claim. Publish the treasury address so the
+ * movements can be checked against whatever is promised.
  */
 contract BarkClaimMint is Ownable, ReentrancyGuard {
     /// 70 BARK per Base transaction, matching the airdrop.
