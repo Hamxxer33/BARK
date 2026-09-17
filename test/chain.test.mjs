@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { encodeFunctionData, formatUnits as viemFormatUnits, toFunctionSelector, isAddress as viemIsAddress, getAddress } from "viem";
 import {
-  SELECTOR, encodeClaim, encodeUint, encodeAddress, encodeBytes,
+  SELECTOR, encodeClaim, encodeClaimWithPass, encodeUint, encodeAddress, encodeBytes,
   formatUnits, isAddress, decodeUint, decodeBool, createReader, waitForReceipt, createRpc,
 } from "../chain.js";
 
@@ -68,6 +68,35 @@ await check("claim calldata is byte-for-byte viem, over random inputs", () => {
       encodeClaim(c),
       encodeFunctionData({ abi: claimAbi, functionName: "claim", args: [getAddress(c.account), c.txCount, c.deadline, c.signature] }),
     );
+  }
+});
+
+await check("claimWithPass carries identical args, only the selector differs", () => {
+  const passAbi = [{
+    type: "function", name: "claimWithPass", stateMutability: "payable", outputs: [{ type: "uint256" }],
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "txCount", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "signature", type: "bytes" },
+    ],
+  }];
+  const rand = (n) => "0x" + Array.from({ length: n }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0")).join("");
+  for (let i = 0; i < 50; i += 1) {
+    const c = {
+      account: rand(20),
+      txCount: BigInt(Math.floor(Math.random() * 1e6)),
+      deadline: BigInt(Math.floor(Math.random() * 1e12)),
+      signature: rand(1 + Math.floor(Math.random() * 80)),
+    };
+    const mine = encodeClaimWithPass(c);
+    assert.equal(
+      mine,
+      encodeFunctionData({ abi: passAbi, functionName: "claimWithPass", args: [getAddress(c.account), c.txCount, c.deadline, c.signature] }),
+    );
+    // Same tail as the direct claim — the wrapper only changes where it is sent.
+    assert.equal(mine.slice(10), encodeClaim(c).slice(10));
+    assert.equal(mine.slice(0, 10), SELECTOR.claimWithPass);
   }
 });
 

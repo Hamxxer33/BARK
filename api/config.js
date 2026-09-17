@@ -20,5 +20,7 @@ export default function handler(req, res) {
     symbol: process.env.TOKEN_SYMBOL || "BARK",
     walletConnectProjectId:
       process.env.WALLETCONNECT_PROJECT_ID || process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "",
+    // Empty until BarkClaimMint is deployed; the page then claims directly, free.
+    mint: process.env.MINT_ADDRESS || "",
   });
 }

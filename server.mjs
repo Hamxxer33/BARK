@@ -41,6 +41,9 @@ const PORT = Number(env.PORT || 3000);
 const TOKEN_NAME = env.TOKEN_NAME || "BARK";
 const TOKEN_SYMBOL = env.TOKEN_SYMBOL || "BARK";
 const WC_PROJECT_ID = env.WALLETCONNECT_PROJECT_ID || env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "";
+// Empty until BarkClaimMint is deployed. While it is empty the page claims straight
+// from the airdrop and charges nothing.
+const MINT_ADDRESS = env.MINT_ADDRESS || deployed.mint || "";
 
 let signerKey = env.SIGNER_PRIVATE_KEY || env.PRIVATE_KEY || "";
 if (signerKey && !signerKey.startsWith("0x")) signerKey = `0x${signerKey}`;
@@ -112,6 +115,7 @@ const server = createServer(async (req, res) => {
         name: TOKEN_NAME,
         symbol: TOKEN_SYMBOL,
         walletConnectProjectId: WC_PROJECT_ID,
+        mint: MINT_ADDRESS,
       })};`,
     );
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -133,6 +137,7 @@ const server = createServer(async (req, res) => {
       name: TOKEN_NAME,
       symbol: TOKEN_SYMBOL,
       walletConnectProjectId: WC_PROJECT_ID,
+      mint: MINT_ADDRESS,
       configured: Boolean(TOKEN && AIRDROP),
     });
     return;

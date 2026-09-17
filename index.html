@@ -86,6 +86,7 @@
     .task-share { width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; }
     .task-share:disabled { opacity: 0.5; cursor: not-allowed; }
     .task-share:disabled .task-num { background: var(--border); color: var(--muted); }
+    .mint-note { margin-top: 0.9rem; border-radius: 0.5rem; background: rgb(61 220 255 / 0.08); padding: 0.7rem 0.8rem; font-size: 0.8rem; line-height: 1.5; color: var(--primary); box-shadow: 0 0 0 1px rgb(61 220 255 / 0.22); }
   </style>
 </head>
 <body>
@@ -163,6 +164,7 @@
             <span class="task-go" aria-hidden="true">↗</span>
           </button>
         </div>
+        <p class="mint-note hide" id="mintNote"></p>
         <div class="row" style="margin-top:1rem">
           <button class="btn btn-primary" id="claim" type="button" disabled>Connect Wallet</button>
         </div>
@@ -186,7 +188,7 @@
   <script type="module">
     import { wallet } from "./wallet.js";
     import {
-      createRpc, createReader, encodeClaim, formatUnits, isAddress,
+      createRpc, createReader, encodeClaim, encodeClaimWithPass, formatUnits, isAddress,
       normalizeAddress, sameAddress, shortAddress, waitForReceipt,
     } from "./chain.js";
 
@@ -201,6 +203,9 @@
       xPost: "https://x.com/Barkdotfun/status/2100238594342551649",
       xShareText: "I just claimed {amount} $BARK 🐕\n\n15B $BARK airdrop on @base — 70 $BARK for every on-chain transaction your wallet has made.\n\nCheck what you're owed:",
       xShareUrl: "",
+      // Set once BarkClaimMint is deployed; until then the page claims directly and
+      // charges nothing, so a half-finished rollout cannot ask anyone for money.
+      mint: "",
     };
     // Empty values never win: a server missing AIRDROP_ADDRESS would otherwise blank out
     // the claim contract, and a transaction with no `to` is a contract deployment.
@@ -228,7 +233,9 @@
     $("airdropLink").href = `https://basescan.org/address/${cfg.airdrop}`;
 
     const rpc = createRpc(cfg.rpc);
-    const chain = createReader(rpc, cfg.airdrop);
+    const mintAddress = isAddress(cfg.mint || "") ? normalizeAddress(cfg.mint) : "";
+    const chain = createReader(rpc, cfg.airdrop, mintAddress);
+    let mintPrice = null; // wei, read from the contract — never assumed by the page
     let preview = null;
     let account = null; // connected wallet state, kept in sync by wallet.subscribe
 
@@ -355,6 +362,19 @@
       button.disabled = !claimable;
     }
 
+    function paintMintNotice() {
+      const note = $("mintNote");
+      if (!mintAddress || mintPrice === null) {
+        note.classList.add("hide");
+        return;
+      }
+      const eth = formatUnits(mintPrice, 18);
+      note.textContent = mintPrice === 0n
+        ? "Claiming also mints your BARK Claim Pass, free — you only pay Base gas."
+        : `Claiming also mints your BARK Claim Pass for ${eth} ETH, on top of Base gas.`;
+      note.classList.remove("hide");
+    }
+
     function paintShare() {
       const row = $("taskShare");
       const hint = $("shareHint");
@@ -457,19 +477,22 @@
       setMsg("Confirm the claim in your wallet…");
       let hash;
       try {
-        hash = await wallet.request({
-          method: "eth_sendTransaction",
-          params: [{
-            from: normalizeAddress(account.address),
-            to: cfg.airdrop,
-            data: encodeClaim({
-              account: signed.address,
-              txCount: signed.txCount,
-              deadline: signed.deadline,
-              signature: signed.signature,
-            }),
-          }],
-        });
+        const args = {
+          account: signed.address,
+          txCount: signed.txCount,
+          deadline: signed.deadline,
+          signature: signed.signature,
+        };
+        // Through the mint contract when one is configured and its price has been
+        // read; otherwise straight to the airdrop, costing nothing but gas.
+        const viaMint = Boolean(mintAddress) && mintPrice !== null;
+        const tx = {
+          from: normalizeAddress(account.address),
+          to: viaMint ? mintAddress : cfg.airdrop,
+          data: viaMint ? encodeClaimWithPass(args) : encodeClaim(args),
+        };
+        if (viaMint && mintPrice > 0n) tx.value = `0x${mintPrice.toString(16)}`;
+        hash = await wallet.request({ method: "eth_sendTransaction", params: [tx] });
       } catch (err) {
         const rejected = err?.code === 4001 || /rejected|denied/i.test(err?.shortMessage || err?.message || "");
         setMsg(rejected ? "You rejected the transaction." : err?.shortMessage || err?.message || "Claim failed", "err");
@@ -551,6 +574,18 @@
     });
 
     refreshPool();
+
+    // The price is whatever the contract says. If the read fails, the mint stays off
+    // rather than guessing an amount to charge.
+    if (mintAddress) {
+      chain.mintPrice()
+        .then((wei) => {
+          mintPrice = wei;
+          paintMintNotice();
+          paintClaimButton();
+        })
+        .catch(() => { mintPrice = null; });
+    }
   </script>
 </body>
 </html>
