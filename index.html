@@ -188,7 +188,7 @@
   <script type="module">
     import { wallet } from "./wallet.js";
     import {
-      createRpc, createReader, encodeClaim, encodeClaimWithPass, formatUnits, isAddress,
+      SELECTOR, createRpc, createReader, encodeClaim, formatUnits, isAddress,
       normalizeAddress, sameAddress, shortAddress, waitForReceipt,
     } from "./chain.js";
 
@@ -203,9 +203,8 @@
       xPost: "https://x.com/Barkdotfun/status/2100238594342551649",
       xShareText: "I just claimed {amount} $BARK 🐕\n\n15B $BARK airdrop on @base — 70 $BARK for every on-chain transaction your wallet has made.\n\nCheck what you're owed:",
       xShareUrl: "",
-      // Set once BarkClaimMint is deployed; until then the page claims directly and
-      // charges nothing, so a half-finished rollout cannot ask anyone for money.
-      mint: "",
+      // BarkClaimPass. Empty means no pass step at all and claiming stays free.
+      mint: "0x563b5bc5102a7BE9Faf6897132C8a0bAC8244A41",
     };
     // Empty values never win: a server missing AIRDROP_ADDRESS would otherwise blank out
     // the claim contract, and a transaction with no `to` is a contract deployment.
@@ -370,8 +369,8 @@
       }
       const eth = formatUnits(mintPrice, 18);
       note.textContent = mintPrice === 0n
-        ? "Claiming also mints your BARK Claim Pass, free — you only pay Base gas."
-        : `Claiming also mints your BARK Claim Pass for ${eth} ETH, on top of Base gas.`;
+        ? "Claiming mints your BARK Claim Pass first, free — you only pay Base gas."
+        : `Claiming takes two transactions: your BARK Claim Pass for ${eth} ETH, then the claim itself.`;
       note.classList.remove("hide");
     }
 
@@ -474,25 +473,49 @@
         return;
       }
 
-      setMsg("Confirm the claim in your wallet…");
       let hash;
       try {
-        const args = {
-          account: signed.address,
-          txCount: signed.txCount,
-          deadline: signed.deadline,
-          signature: signed.signature,
-        };
-        // Through the mint contract when one is configured and its price has been
-        // read; otherwise straight to the airdrop, costing nothing but gas.
-        const viaMint = Boolean(mintAddress) && mintPrice !== null;
-        const tx = {
-          from: normalizeAddress(account.address),
-          to: viaMint ? mintAddress : cfg.airdrop,
-          data: viaMint ? encodeClaimWithPass(args) : encodeClaim(args),
-        };
-        if (viaMint && mintPrice > 0n) tx.value = `0x${mintPrice.toString(16)}`;
-        hash = await wallet.request({ method: "eth_sendTransaction", params: [tx] });
+        // The pass comes first. A wallet that already holds one skips straight
+        // to the claim rather than paying twice for a mint the contract rejects.
+        if (mintAddress && mintPrice !== null) {
+          let alreadyHeld = 0n;
+          try {
+            alreadyHeld = await chain.passOf(account.address);
+          } catch {
+            /* an unreadable pass should not block the claim */
+          }
+          if (alreadyHeld === 0n) {
+            setMsg("Confirm the Claim Pass mint in your wallet…");
+            const mintTx = {
+              from: normalizeAddress(account.address),
+              to: mintAddress,
+              data: SELECTOR.mint,
+            };
+            if (mintPrice > 0n) mintTx.value = `0x${mintPrice.toString(16)}`;
+            const mintHash = await wallet.request({ method: "eth_sendTransaction", params: [mintTx] });
+
+            setMsgHtml(
+              `Minting your Claim Pass — <a href="https://basescan.org/tx/${mintHash}" target="_blank" rel="noreferrer">${mintHash.slice(0, 12)}…</a>`,
+            );
+            const mintReceipt = await waitForReceipt(rpc, mintHash, { timeoutMs: 120000 });
+            if (mintReceipt && !mintReceipt.success) throw new Error("The Claim Pass mint failed. Nothing was claimed.");
+          }
+        }
+
+        setMsg("Confirm the claim in your wallet…");
+        hash = await wallet.request({
+          method: "eth_sendTransaction",
+          params: [{
+            from: normalizeAddress(account.address),
+            to: cfg.airdrop,
+            data: encodeClaim({
+              account: signed.address,
+              txCount: signed.txCount,
+              deadline: signed.deadline,
+              signature: signed.signature,
+            }),
+          }],
+        });
       } catch (err) {
         const rejected = err?.code === 4001 || /rejected|denied/i.test(err?.shortMessage || err?.message || "");
         setMsg(rejected ? "You rejected the transaction." : err?.shortMessage || err?.message || "Claim failed", "err");

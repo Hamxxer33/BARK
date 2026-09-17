@@ -15,9 +15,9 @@ export const SELECTOR = {
   claimedAmount: "0x04e86903", // claimedAmount(address)
   remaining: "0x55234ec0", // remaining()
   claim: "0x2ada8a32", // claim(address,uint256,uint256,bytes)
-  claimWithPass: "0x6a5cc2b8", // claimWithPass(address,uint256,uint256,bytes) on BarkClaimMint
-  price: "0xa035b1fe", // price() on BarkClaimMint
-  totalMinted: "0xa2309ff8", // totalMinted() on BarkClaimPass
+  mint: "0x1249c58b", // mint() on BarkClaimPass
+  price: "0xa035b1fe", // price() on BarkClaimPass
+  passOf: "0xad37ec91", // passOf(address) on BarkClaimPass
 };
 
 /* ------------------------------------------------------------------ types */
@@ -72,14 +72,6 @@ export function encodeClaim({ account, txCount, deadline, signature }) {
   return SELECTOR.claim + head + encodeBytes(signature);
 }
 
-/**
- * Same arguments as claim(), routed through BarkClaimMint so the call also pays for
- * and mints the pass. Identical encoding — only the selector differs.
- */
-export function encodeClaimWithPass(args) {
-  return SELECTOR.claimWithPass + encodeClaim(args).slice(SELECTOR.claim.length);
-}
-
 export const decodeUint = (hex) => BigInt(hex && hex !== "0x" ? hex : "0x0");
 export const decodeBool = (hex) => decodeUint(hex) !== 0n;
 
@@ -112,8 +104,10 @@ export function createRpc(url) {
 export function createReader(rpc, contract, mint = "") {
   const call = (data, to = contract) => rpc("eth_call", [{ to, data }, "latest"]);
   return {
-    /// Mint price in wei, or null when no mint contract is configured.
+    /// Mint price in wei, or null when no pass contract is configured.
     mintPrice: async () => (mint ? decodeUint(await call(SELECTOR.price, mint)) : null),
+    /// The pass this wallet already owns, or 0n if it has none yet.
+    passOf: async (address) => (mint ? decodeUint(await call(SELECTOR.passOf + encodeAddress(address), mint)) : 0n),
     transactionCount: async (address) => Number(decodeUint(await rpc("eth_getTransactionCount", [normalizeAddress(address), "latest"]))),
     remaining: async () => decodeUint(await call(SELECTOR.remaining)),
     claimed: async (address) => decodeBool(await call(SELECTOR.claimed + encodeAddress(address))),
